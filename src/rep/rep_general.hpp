@@ -254,7 +254,44 @@ struct GeneralRep : Representation<N> {
     return res;
   }
 
+  // Direct symmetric-subspace basis for a single-row diagram {n} (fully-symmetric
+  // rep: SU(2) spin-j = {2j}, SU(3) (p,0) = {p}). Avoids enumerating the n! row-
+  // symmetrizer permutations (which OOMs for n>~10). Each basis vector is the
+  // normalized symmetrization of a multiset of n indices from {0..N-1}: for the
+  // sorted index-tuple, set the standard-tensor component to 1 at every DISTINCT
+  // permutation, then normalize. #vectors = C(N+n-1, n) = symmetric-rep dim. The
+  // resulting W matches the V^{xn} layout used by the general path, so
+  // apply_onebody/derivation/rep_matrix/apply_tensor all work unchanged.
+  void build_symmetric_basis() {
+    W.clear();
+    // Enumerate sorted (non-decreasing) length-n tuples = multisets of {0..N-1}.
+    std::vector<int> t(n, 0);  // start at (0,0,...,0)
+    while (true) {
+      // symmetrize this multiset: sum over distinct permutations of the sorted tuple.
+      std::vector<Complex> v(dimT, Complex(0, 0));
+      std::vector<int> perm = t;  // already non-decreasing -> next_permutation visits all distinct
+      long count = 0;
+      do {
+        v[tuple_to_idx(perm)] = Complex(1, 0);
+        ++count;
+      } while (std::next_permutation(perm.begin(), perm.end()));
+      const Real inv = 1.0 / std::sqrt(static_cast<Real>(count));  // exactly C(n; multiplicities) terms
+      for (auto& z : v) z *= Complex(inv, 0);
+      W.push_back(std::move(v));
+
+      // advance to the next non-decreasing tuple (odometer with t[j] <= t[j+1]).
+      int j = n - 1;
+      while (j >= 0 && t[j] == N - 1) --j;
+      if (j < 0) break;
+      ++t[j];
+      for (int k = j + 1; k < n; ++k) t[k] = t[j];
+    }
+  }
+
   void build_basis() {
+    // Single-row (fully-symmetric) diagrams: build the symmetric subspace directly,
+    // skipping the n! row-symmetrizer enumeration that the general path would do.
+    if (rows.size() == 1) { build_symmetric_basis(); return; }
     // canonical tableau: positions 0..n-1 row by row; record row/column membership.
     std::vector<std::vector<int>> rowblocks(rows.size());
     int ncols = rows.empty() ? 0 : rows[0];

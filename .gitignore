@@ -1,5 +1,5 @@
-# Build artifacts
-build/
+# Build artifacts (build/, and per-agent build_* dirs)
+build*/
 *.o
 *.out
 a.out

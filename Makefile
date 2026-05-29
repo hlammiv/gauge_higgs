@@ -18,7 +18,9 @@ DEFS := -DNDIM=$(NDIM) -DNCOL=$(NCOL)
 
 BUILD      := build
 HEADERS    := $(shell find src -name '*.hpp')
-DRIVERSRC  := $(wildcard src/*.cpp)
+# screening.cpp is a D=3-only demo driver (static_assert NDIM==3); build on demand with
+# `make NDIM=3 NCOL=2 build/screening`, not in the default (NDIM=4) `all`.
+DRIVERSRC  := $(filter-out src/screening.cpp,$(wildcard src/*.cpp))
 DRIVERBINS := $(patsubst src/%.cpp,$(BUILD)/%,$(DRIVERSRC))
 TESTSRC    := $(wildcard test/*.cpp)
 TESTBINS   := $(patsubst test/%.cpp,$(BUILD)/%,$(TESTSRC))
@@ -38,10 +40,12 @@ $(BUILD)/%: src/%.cpp $(HEADERS) $(CONFIG_STAMP) | $(BUILD)
 
 # MPI domain-decomposed drivers (separate target; needs mpicxx + -DUSE_MPI).
 .PHONY: mpi
-mpi: $(BUILD)/gh_hmc_mpi $(BUILD)/gh_higgs_mpi
+mpi: $(BUILD)/gh_hmc_mpi $(BUILD)/gh_higgs_mpi $(BUILD)/gh_higgs_multi_mpi
 $(BUILD)/gh_hmc_mpi: src/mpi/gh_hmc_mpi.cpp $(HEADERS) $(CONFIG_STAMP) | $(BUILD)
 	mpicxx $(STD) $(OPT) $(WARN) $(OMP) $(INC) $(DEFS) -DUSE_MPI -o $@ $<
 $(BUILD)/gh_higgs_mpi: src/mpi/gh_higgs_mpi.cpp $(HEADERS) $(CONFIG_STAMP) | $(BUILD)
+	mpicxx $(STD) $(OPT) $(WARN) $(OMP) $(INC) $(DEFS) -DUSE_MPI -o $@ $<
+$(BUILD)/gh_higgs_multi_mpi: src/mpi/gh_higgs_multi_mpi.cpp $(HEADERS) $(CONFIG_STAMP) | $(BUILD)
 	mpicxx $(STD) $(OPT) $(WARN) $(OMP) $(INC) $(DEFS) -DUSE_MPI -o $@ $<
 
 $(BUILD)/%: test/%.cpp $(HEADERS) | $(BUILD)

@@ -47,13 +47,12 @@ int main(int argc, char** argv) {
   // Treated as COMPLEX reps (the tensor basis is not the manifestly-real basis, so D is
   // complex unitary there): expected zero modes = (N^2-1) gauge Goldstones + 1 global U(1).
   std::printf("-- SU(2) binary polyhedral (2T spin-3, 2O spin-4) --\n");
-  // NOTE: 2I needs spin-6 = Young rows {12} (single row) -> 12! Young-symmetrizer perms;
-  // blocked until GeneralRep gets a direct symmetric-rep basis (no n! enumeration).
   { GeneralRep<2> r({6});  run<2>(r, gens_2T(), "2T  (spin-3)", 800); }
   { GeneralRep<2> r({8});  run<2>(r, gens_2O(), "2O  (spin-4)", 800); }
   std::printf("\n-- SU(3) Sigma series --\n");
   { GeneralRep<3> r({4, 2}); run<3>(r, gens_Sigma108(), "Sigma(108) (2,2)", 600); }
-  if (all) {
+  if (all) {  // heavier / larger coupling-search; 2I now buildable via the symmetric-rep basis
+    { GeneralRep<2> r({12}); run<2>(r, gens_2I(), "2I  (spin-6)", 8000); }
     { GeneralRep<3> r({5, 1}); run<3>(r, gens_Sigma216(),  "Sigma(216) (4,1)", 600); }
     { GeneralRep<3> r({6});    run<3>(r, gens_Sigma1080(), "Sigma(1080) (6,0)", 600); }
     { GeneralRep<3> r({6, 3}); run<3>(r, gens_Sigma648(),  "Sigma(648) (3,3)", 400); }
