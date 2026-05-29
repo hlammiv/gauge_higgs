@@ -1,0 +1,127 @@
+[
+  {
+    "arxiv": "1206.1901",
+    "filename": "2011-Neal-MCMC-Hamiltonian-dynamics.pdf",
+    "citation": "R. M. Neal, MCMC using Hamiltonian dynamics, Handbook of MCMC Ch.5 (2011), arXiv:1206.1901"
+  },
+  {
+    "arxiv": "1002.4232",
+    "filename": "2010-Luscher-Computational-Strategies-Lattice-QCD.pdf",
+    "citation": "M. Luscher, Computational Strategies in Lattice QCD, Les Houches 2009, arXiv:1002.4232"
+  },
+  {
+    "arxiv": "hep-lat/0505020",
+    "filename": "2006-Takaishi-deForcrand-Symplectic-Integrators-HMC.pdf",
+    "citation": "T. Takaishi, P. de Forcrand, Testing and tuning symplectic integrators for HMC in lattice QCD, Phys. Rev. E 73 036706 (2006), arXiv:hep-lat/0505020"
+  },
+  {
+    "arxiv": "cond-mat/0110585",
+    "filename": "2002-Omelyan-MinimumNorm-Integrators.pdf",
+    "citation": "I. P. Omelyan, I. M. Mryglod, R. Folk, Optimized Forest-Ruth- and Suzuki-like algorithms, arXiv:cond-mat/0110585"
+  },
+  {
+    "arxiv": "1108.1828",
+    "filename": "2011-Clark-Joo-Kennedy-Silva-ForceGradient-Integrator-Tuning.pdf",
+    "citation": "M. A. Clark, B. Joo, A. D. Kennedy, P. J. Silva, Improving dynamical lattice QCD via Poisson brackets and a force-gradient integrator, Phys. Rev. D 84 071502(R) (2011), arXiv:1108.1828"
+  },
+  {
+    "arxiv": "1009.5228",
+    "filename": "2011-Schaefer-Sommer-Virotta-CriticalSlowingDown.pdf",
+    "citation": "S. Schaefer, R. Sommer, F. Virotta, Critical slowing down and error analysis in lattice QCD, Nucl. Phys. B 845 93 (2011), arXiv:1009.5228"
+  },
+  {
+    "arxiv": "1001.4460",
+    "filename": "2013-Beskos-OptimalTuning-HMC.pdf",
+    "citation": "A. Beskos et al., Optimal tuning of the hybrid Monte Carlo algorithm, Bernoulli 19 (2013), arXiv:1001.4460"
+  },
+  {
+    "arxiv": "hep-lat/0311018",
+    "filename": "2004-Morningstar-Peardon-Analytic-SU3-Smearing.pdf",
+    "citation": "C. Morningstar, M. Peardon, Analytic smearing of SU(3) link variables, Phys. Rev. D 69 054501 (2004), arXiv:hep-lat/0311018"
+  },
+  {
+    "arxiv": "hep-lat/9507024",
+    "filename": "1995-Csikor-etal-EWPT-SU2-Higgs.pdf",
+    "citation": "F. Csikor et al., Electroweak Phase Transition and Numerical Simulations in the SU(2) Higgs Model, arXiv:hep-lat/9507024"
+  },
+  {
+    "arxiv": "hep-lat/9409017",
+    "filename": "1995-Fodor-etal-Simulating-EWPT-SU2-Higgs.pdf",
+    "citation": "Z. Fodor et al., Simulating the Electroweak Phase Transition in the SU(2) Higgs Model, Nucl. Phys. B 439 147 (1995), arXiv:hep-lat/9409017"
+  },
+  {
+    "arxiv": "0911.1721",
+    "filename": "2010-Bonati-etal-PhaseDiagram-SU2-Higgs.pdf",
+    "citation": "C. Bonati et al., Phase diagram of the lattice SU(2) Higgs model, Nucl. Phys. B 828 390 (2010), arXiv:0911.1721"
+  },
+  {
+    "arxiv": "1908.10950",
+    "filename": "2020-Gunther-Hollwieser-Knechtli-Constrained-HMC-GaugeHiggs.pdf",
+    "citation": "M. Gunther, R. Hollwieser, F. Knechtli, Constrained HMC algorithms for gauge-Higgs models, CPC 251 107081 (2020), arXiv:1908.10950"
+  },
+  {
+    "arxiv": "1102.1900",
+    "filename": "2011-Wellegehausen-Wipf-Wozar-G2-Higgs-LHMC.pdf",
+    "citation": "B. H. Wellegehausen, A. Wipf, C. Wozar, Phase diagram of the lattice G(2) Higgs Model, Phys. Rev. D 83 114502 (2011), arXiv:1102.1900"
+  },
+  {
+    "arxiv": "2507.07759",
+    "filename": "2025-Catumba-etal-Custodial-2HDM-HMC.pdf",
+    "citation": "G. Catumba et al., Lattice investigation of custodial two-Higgs-doublet model at weak quartic couplings, JHEP 10 214 (2025), arXiv:2507.07759"
+  },
+  {
+    "arxiv": "0805.2058",
+    "filename": "2010-DelDebbio-Patella-Pica-HigherReps-Lattice.pdf",
+    "citation": "L. Del Debbio, A. Patella, C. Pica, Higher representations on the lattice: SU(2) with adjoint fermions, Phys. Rev. D 81 094503 (2010), arXiv:0805.2058"
+  },
+  {
+    "arxiv": "0806.1174",
+    "filename": "2008-Bertlmann-Krammer-Bloch-Vectors-Qudits-GellMann.pdf",
+    "citation": "R. A. Bertlmann, P. Krammer, Bloch vectors for qudits, J. Phys. A 41 235303 (2008), arXiv:0806.1174"
+  },
+  {
+    "arxiv": "2011.01764",
+    "filename": "2021-Fonseca-GroupMath.pdf",
+    "citation": "R. M. Fonseca, GroupMath: A Mathematica package for group theory calculations, CPC 267 108085 (2021), arXiv:2011.01764"
+  },
+  {
+    "arxiv": "1511.08771",
+    "filename": "2015-Yamatsu-LieAlgebras-Reps-Tables.pdf",
+    "citation": "N. Yamatsu, Finite-Dimensional Lie Algebras and Their Representations for Unified Model Building, arXiv:1511.08771"
+  },
+  {
+    "arxiv": "2106.15152",
+    "filename": "2021-Bonati-etal-SUNc-Multiflavor-Adjoint-Scalars.pdf",
+    "citation": "C. Bonati et al., 3D lattice SU(Nc) gauge theories with multiflavor adjoint scalars, Phys. Rev. D 104 094513 (2021), arXiv:2106.15152"
+  },
+  {
+    "arxiv": "hep-lat/9811004",
+    "filename": "1998-Kajantie-etal-SU3-Adjoint-Higgs-PhaseDiagram.pdf",
+    "citation": "K. Kajantie et al., The phase diagram of 3D SU(3)+adjoint Higgs theory, JHEP 04 023 (1998), arXiv:hep-lat/9811004"
+  },
+  {
+    "arxiv": "hep-lat/9612021",
+    "filename": "1997-Hart-Philipsen-Stack-Teper-SU2-Adjoint-Higgs-3D.pdf",
+    "citation": "A. Hart, O. Philipsen, J. D. Stack, M. Teper, Phase diagram of the SU(2) adjoint Higgs model in 2+1 D, Phys. Lett. B 396 217 (1997), arXiv:hep-lat/9612021"
+  },
+  {
+    "arxiv": "hep-lat/9510020",
+    "filename": "1996-Kajantie-etal-EWPT-NonPerturbative.pdf",
+    "citation": "K. Kajantie, M. Laine, K. Rummukainen, M. Shaposhnikov, The Electroweak Phase Transition: A Non-Perturbative Analysis, Nucl. Phys. B 466 189 (1996), arXiv:hep-lat/9510020"
+  },
+  {
+    "arxiv": "1512.03487",
+    "filename": "2016-Boyle-etal-Grid-DataParallel-QCD.pdf",
+    "citation": "P. A. Boyle et al., Grid: A next generation data parallel C++ QCD library, PoS LATTICE2015 023, arXiv:1512.03487"
+  },
+  {
+    "arxiv": "2503.06721",
+    "filename": "2025-Drach-Martins-Pica-Rago-HiRep-v2.pdf",
+    "citation": "V. Drach, S. Martins, C. Pica, A. Rago, High-Performance Simulations of Higher Representations of Wilson Fermions (HiRep v2), arXiv:2503.06721"
+  },
+  {
+    "arxiv": "2306.01098",
+    "filename": "2024-Mazur-etal-SIMULATeQCD.pdf",
+    "citation": "L. Mazur et al. (HotQCD), SIMULATeQCD: A simple multi-GPU lattice code for QCD, CPC 300 109164 (2024), arXiv:2306.01098"
+  }
+]

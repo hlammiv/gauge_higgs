@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+*.o
+*.out
+a.out
+
+# Local editor/agent settings
+.claude/
+
+# Copyrighted / unpublished literature (re-fetchable via literature/_fetch.sh)
+*.pdf
+*.zip
+*.nb
+literature/discrete_symmetry/
+*.synctex.gz
+*.aux
+*.log
