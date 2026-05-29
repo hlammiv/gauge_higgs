@@ -105,9 +105,12 @@ struct CasimirChannels {
       Real a = reTrDagProd(V[k], w); alpha.push_back(a);
       w = w - V[k] * Complex(a, 0);
       if (k > 0) w = w - V[k - 1] * Complex(beta[k - 1], 0);
-      for (const auto& u : V) { Real ov = reTrDagProd(u, w); w = w - u * Complex(ov, 0); }  // full reorth
+      // full reorthogonalization, twice (DGKS) -- a single pass loses orthogonality at
+      // larger matrix dimension and Lanczos then emits ghost eigenvalues (spurious channels).
+      for (int pass = 0; pass < 2; ++pass)
+        for (const auto& u : V) { Real ov = reTrDagProd(u, w); w = w - u * Complex(ov, 0); }
       Real b = std::sqrt(std::max(0.0, reTrDagProd(w, w)));
-      if (b < 1e-7) break;
+      if (b < 1e-6) break;
       beta.push_back(b);
       V.push_back(w * Complex(1.0 / b, 0));
     }
