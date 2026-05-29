@@ -101,6 +101,8 @@ AlignResult find_stable_couplings(const CasimirChannels<N>& ch, const DVec& phi0
   const int n = real_rep ? ch.d : 2 * ch.d;
   std::vector<std::vector<Real>> Hc(nc);    // Hessian of V_c at phi0 (mu2=0)
   std::vector<Real> mu2c(nc);               // radial mu2 from channel c alone
+  // Per-channel Hessians are independent -> parallelize (the heavy step, esp. d=64 Sigma(648)).
+  #pragma omp parallel for schedule(dynamic)
   for (int c = 0; c < nc; ++c) {
     std::vector<Real> e(nc, 0.0); e[c] = 1.0;
     Hc[c] = real_hessian<N>(ch, phi0, e, 0.0, real_rep);

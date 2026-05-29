@@ -24,6 +24,7 @@ that this stratum is the GLOBAL minimum (vs other subgroups) — a further scan.
 | 2I (spin-6) | {12} | 13 | 0,2,6,12,20,30,42,56,72,90,110,132,156 | 0.065 | 0.213 | 2I multiplets (mostly x1; some x2,x3,x4) |
 | Sigma(108) | (2,2)={4,2} | 27 | 0,3,6,8,12,15,18,20,24 | 0.104 | 0.161 | octets x8 + x1,x2 |
 | Sigma(216) | (4,1)={5,1} | 35 | 0,3,6,8,12,15,20,24,30,35 | 0.109 | 0.143 | x8,x4,x8,x16,x16,x8,x1 |
+| Sigma(648) | (3,3)={6,3} | 64 | 0,3,6,8,12,15,18,20,24,27,30,35,36,38,42,48 | 0.093 | 0.050 | x8,x16,x3,x16,x8,x16,x4,x12,x16,x3,x8,x8,x1 |
 | Sigma(1080) | (6,0)={6} | 28 | 0,3,8,15,24,35,48 | 0.027 | 0.094 | (9 zero modes; positive massive) |
 
 ### f_c values (per channel, in the C2 order above)
@@ -32,11 +33,12 @@ that this stratum is the GLOBAL minimum (vs other subgroups) — a further scan.
 - **2I**:        0.1182 0.0819 0.0353 0.0274 0.1550 0.0828 0.0157 0.0702 0.1083 0.1143 0.0189 0.1124 0.0595
 - **Sigma(108)**:  0.2782 0.0930 0.1029 0.1256 0.0071 0.0101 0.0443 0.2148 0.1240
 - **Sigma(216)**:  0.0213 0.0726 0.0376 0.2013 0.1806 0.0053 0.1992 0.0513 0.0476 0.1831
+- **Sigma(648)**:  0.0473 0.0603 0.0793 0.0903 0.0635 0.0196 0.0177 0.1235 0.0374 0.0141 0.0248 0.0884 0.0726 0.0333 0.0922 0.1359
 - **Sigma(1080)**: 0.1079 0.0906 0.3809 0.3968 0.0060 0.0028 0.0152
 
-6 of 7 crystal-like subgroups done. (2I unblocked by the direct symmetric-rep basis for
-single-row Young diagrams; its channel decomposition uses double-reorthogonalized Lanczos.)
+ALL 7 crystal-like subgroups done (SU(2): 2T,2O,2I; SU(3): Sigma(108),(216),(648),(1080)).
+(2I unblocked by the direct symmetric-rep basis for single-row Young diagrams; channel
+decompositions use double-reorthogonalized Lanczos; the alignment per-channel Hessian
+precompute is OpenMP-parallel and skips zero couplings, making the d=64 Sigma(648) feasible.)
 
-### Remaining
-- **Sigma(648) ((3,3), d=64)**: alignment works but the per-channel Hessian precompute is
-  O(N^2 d^3) heavy at d=64 (~tens of minutes serial). Needs the cached/optimized rep path.
+Regenerate: `make build/test_align && OMP_NUM_THREADS=16 ./build/test_align all`.

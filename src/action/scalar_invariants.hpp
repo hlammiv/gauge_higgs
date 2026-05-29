@@ -63,11 +63,12 @@ struct CasimirChannels {
     return reTrDagProd(M, apply_proj(c, M));
   }
 
-  // Total V = -mu2 phi^dag phi + sum_c f[c] V_c.
+  // Total V = -mu2 phi^dag phi + sum_c f[c] V_c. (Skip zero couplings -- big speedup when
+  // few channels are active, e.g. the per-channel Hessian precompute uses f = e_c.)
   Real value(const DVec& phi, const std::vector<Real>& f, Real mu2) const {
     Real v = -mu2 * phi.norm2();
     DMat M = outer(phi);
-    for (int c = 0; c < n_channels(); ++c) v += f[c] * reTrDagProd(M, apply_proj(c, M));
+    for (int c = 0; c < n_channels(); ++c) if (f[c] != 0.0) v += f[c] * reTrDagProd(M, apply_proj(c, M));
     return v;
   }
 
@@ -78,6 +79,7 @@ struct CasimirChannels {
     DVec g(d);
     for (int e = 0; e < d; ++e) g(e) = Complex(-mu2, 0) * phi(e);
     for (int c = 0; c < n_channels(); ++c) {
+      if (f[c] == 0.0) continue;           // skip inactive channels (big speedup)
       DMat PM = apply_proj(c, M);          // Hermitian
       DVec PMphi = PM * phi;
       for (int e = 0; e < d; ++e) g(e) += Complex(2.0 * f[c], 0) * PMphi(e);
