@@ -7,6 +7,11 @@ a.out
 # Local editor/agent settings
 .claude/
 
+# Scan-campaign output (time series, summaries, logs -- can be large; reproducible
+# from scripts/u1_scan_campaign.sh + the committed manifest)
+u1scan_campaign/
+u1scan_out/
+
 # Copyrighted / unpublished literature (re-fetchable via literature/_fetch.sh)
 *.pdf
 *.zip
