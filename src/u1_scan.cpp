@@ -17,6 +17,7 @@
 //   these are EXACTLY the (beta,kappa)-conjugate energies, so reweighting is exact.
 #include "u1/u1.hpp"
 #include "u1/scan_obs.hpp"
+#include "u1/monopole.hpp"           // monopole_density<D> (DeGrand-Toussaint)
 #include "measure/observables.hpp"   // Stats
 #include <cstdio>
 #include <cstdlib>
@@ -71,7 +72,9 @@ int main(int argc, char** argv) {
   std::fprintf(sf,
     "# Reweighting: weight=exp(-S), S=beta*A-kappa*B+on-site; A=sum_plaq(1-cos),"
     " B=sum_{x,mu}2Re[conj(phi)e^{iq theta}phi]; (E1,E2)=(A,-B),(l1,l2)=(beta,kappa).\n");
-  std::fprintf(sf, "beta,kappa,L,q,plaq,plaq_err,Llink,Llink_err,phi2,phi2_err,acceptance,exp_mdH\n");
+  // rho_M (DeGrand-Toussaint monopole density) is appended at the END of each row, so the
+  // legacy column layout is untouched and old parsers keep working.
+  std::fprintf(sf, "beta,kappa,L,q,plaq,plaq_err,Llink,Llink_err,phi2,phi2_err,acceptance,exp_mdH,rho_M,rho_M_err\n");
 
   std::fprintf(stderr, "# u1_scan: D=%d L=%d^%d q=%d lambda=%.4g grid=%dx%d (beta in [%.4g,%.4g], kappa in [%.4g,%.4g])\n",
                kDim, L, kDim, q, lambda, nb, nk, bmin, bmax, kmin, kmax);
@@ -105,9 +108,9 @@ int main(int argc, char** argv) {
         "# Reweighting: weight=exp(-S), S=beta*A-kappa*B+on-site;"
         " A=plaq_energy_sum=sum_plaq(1-cos theta_pl) [conj to beta],"
         " B=hop_energy_sum=sum_{x,mu}2Re[conj(phi)e^{iq theta}phi] [-B conj to kappa].\n");
-      std::fprintf(tf, "# columns: traj  A  B  avg_plaquette  higgs_length  link_energy\n");
+      std::fprintf(tf, "# columns: traj  A  B  avg_plaquette  higgs_length  link_energy  monopole_density\n");
 
-      Stats plaq, Lphi, Llink;
+      Stats plaq, Lphi, Llink, rhoM;
       double sExp = 0.0; int nrows = 0;
       for (int t = 0; t < nmeas; ++t) {
         for (int e = 0; e < measure_every; ++e) hmc.trajectory();
@@ -116,20 +119,22 @@ int main(int argc, char** argv) {
         const Real pl  = u1::avg_plaquette<kDim>(hmc.th, hmc.lat);
         const Real lp  = u1::higgs_length<kDim>(hmc.phi, hmc.lat);
         const Real le  = u1::link_energy<kDim>(hmc.phi, hmc.th, hmc.lat, q);
-        std::fprintf(tf, "%d %.15g %.15g %.15g %.15g %.15g\n", t, A, B, pl, lp, le);
-        plaq.add(pl); Lphi.add(lp); Llink.add(le);
+        const Real rho = u1::monopole_density<kDim>(hmc.th, hmc.lat);
+        std::fprintf(tf, "%d %.15g %.15g %.15g %.15g %.15g %.15g\n", t, A, B, pl, lp, le, rho);
+        plaq.add(pl); Lphi.add(lp); Llink.add(le); rhoM.add(rho);
         sExp += std::exp(-hmc.last_dH);
         ++nrows;
       }
       std::fclose(tf);
 
       const double expm = nrows ? sExp / nrows : 0.0;
-      std::fprintf(sf, "%.6f,%.6f,%d,%d,%.8g,%.3g,%.8g,%.3g,%.8g,%.3g,%.4f,%.6g\n",
+      std::fprintf(sf, "%.6f,%.6f,%d,%d,%.8g,%.3g,%.8g,%.3g,%.8g,%.3g,%.4f,%.6g,%.8g,%.3g\n",
                    beta, kappa, L, q,
                    plaq.mean(), plaq.binned_error(),
                    Llink.mean(), Llink.binned_error(),
                    Lphi.mean(), Lphi.binned_error(),
-                   hmc.acceptance(), expm);
+                   hmc.acceptance(), expm,
+                   rhoM.mean(), rhoM.binned_error());
       std::fflush(sf);
 
       std::fprintf(stderr,

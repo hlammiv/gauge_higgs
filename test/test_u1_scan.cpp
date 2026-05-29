@@ -8,8 +8,14 @@
 #include "check.hpp"
 #include "u1/u1.hpp"
 #include "u1/scan_obs.hpp"
+#include "u1/monopole.hpp"   // monopole_density<D> (the new ts column)
 #include <random>
 #include <vector>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <sstream>
+#include <cmath>
 
 using namespace gh;
 using namespace gh::u1;
@@ -82,6 +88,82 @@ int main() {
     CHECK_CLOSE(plaq_energy_sum<4>(th2, lat), plaq_energy_sum<4>(th, lat), 1e-10, m);
     std::snprintf(m, sizeof m, "gauge-inv B (q=%d)", q);
     CHECK_CLOSE(hop_energy_sum<4>(phi2, th2, lat, q), hop_energy_sum<4>(phi, th, lat, q), 1e-10, m);
+  }
+
+  // ---- 4. DRIVER SMOKE: ts carries a finite monopole_density column ----
+  // Mirror u1_scan.cpp's per-trajectory measurement loop on a TINY 4^4 lattice (no physics
+  // scan): run a few trajectories, write the ts file with the SAME header + row layout as
+  // the driver, then re-parse the '# columns:' line (header-driven) and confirm a finite
+  // monopole_density column is present in every data row.
+  std::printf("-- driver smoke: ts monopole_density column --\n");
+  {
+    const char* tspath = "/tmp/test_u1_scan_mono_smoke.dat";
+    const int q = 2, nmeas = 6;
+    u1::U1HMC<4> hmc(cube<4>(4), 12345ULL);
+    hmc.beta = 1.0; hmc.kappa = 0.2; hmc.lambda = 0.5; hmc.q = q; hmc.tau = 1.0; hmc.nmd = 8;
+    hmc.hot(0.8); hmc.cold_phi(0.5);
+    for (int t = 0; t < 5; ++t) hmc.trajectory();   // tiny thermalization
+
+    FILE* tf = std::fopen(tspath, "w");
+    CHECK(tf != nullptr, "smoke: opened ts file for writing");
+    if (tf) {
+      // EXACT header + column line the driver writes (must contain monopole_density).
+      std::fprintf(tf, "# U(1)+charge-%d Higgs time series (test smoke).\n", q);
+      std::fprintf(tf, "# columns: traj  A  B  avg_plaquette  higgs_length  link_energy  monopole_density\n");
+      for (int t = 0; t < nmeas; ++t) {
+        hmc.trajectory();
+        const Real A   = u1::plaq_energy_sum<4>(hmc.th, hmc.lat);
+        const Real B   = u1::hop_energy_sum<4>(hmc.phi, hmc.th, hmc.lat, q);
+        const Real pl  = u1::avg_plaquette<4>(hmc.th, hmc.lat);
+        const Real lp  = u1::higgs_length<4>(hmc.phi, hmc.lat);
+        const Real le  = u1::link_energy<4>(hmc.phi, hmc.th, hmc.lat, q);
+        const Real rho = u1::monopole_density<4>(hmc.th, hmc.lat);
+        std::fprintf(tf, "%d %.15g %.15g %.15g %.15g %.15g %.15g\n", t, A, B, pl, lp, le, rho);
+      }
+      std::fclose(tf);
+    }
+
+    // Re-parse: find the '# columns:' line, map NAME -> index, locate monopole_density,
+    // then verify every data row has that many columns and a finite value there.
+    FILE* rf = std::fopen(tspath, "r");
+    CHECK(rf != nullptr, "smoke: reopened ts file for reading");
+    if (rf) {
+      char line[1024];
+      int mono_idx = -1, ncols = 0;
+      const char* tag = "# columns:";
+      while (std::fgets(line, sizeof line, rf)) {
+        if (line[0] == '#') {
+          if (std::strncmp(line, tag, std::strlen(tag)) == 0) {
+            // Tokenize names after the tag; record index of monopole_density.
+            std::istringstream is(std::string(line + std::strlen(tag)));
+            std::string name; int idx = 0;
+            while (is >> name) { if (name == "monopole_density") mono_idx = idx; ++idx; }
+            ncols = idx;
+          }
+          continue;
+        }
+        break;  // first data row (already in 'line')
+      }
+      CHECK(mono_idx >= 0, "smoke: '# columns:' line contains monopole_density");
+      CHECK(ncols == 7, "smoke: header lists 7 columns (5 legacy + traj + monopole_density)");
+
+      // 'line' currently holds the first data row; validate it and the rest.
+      int nrows = 0, ok_rows = 0;
+      do {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\0') continue;
+        std::istringstream ds(line);
+        std::vector<double> vals; double v;
+        while (ds >> v) vals.push_back(v);
+        ++nrows;
+        const bool good = (static_cast<int>(vals.size()) == ncols) &&
+                          (mono_idx < static_cast<int>(vals.size())) &&
+                          std::isfinite(vals[mono_idx]) && (vals[mono_idx] >= 0.0);
+        if (good) ++ok_rows;
+      } while (std::fgets(line, sizeof line, rf));
+      std::fclose(rf);
+      CHECK(nrows == nmeas, "smoke: read all data rows");
+      CHECK(ok_rows == nrows, "smoke: every data row has a finite, non-negative monopole_density");
+    }
   }
 
   return report("test_u1_scan");
