@@ -18,6 +18,7 @@
 #include "u1/u1.hpp"
 #include "u1/scan_obs.hpp"
 #include "u1/monopole.hpp"           // monopole_density<D> (DeGrand-Toussaint)
+#include "u1/autotune.hpp"           // tune_nmd: per-point nmd auto-tune
 #include "measure/observables.hpp"   // Stats
 #include <cstdio>
 #include <cstdlib>
@@ -32,7 +33,7 @@ int main(int argc, char** argv) {
   if (argc < 10) {
     std::fprintf(stderr,
       "usage: %s <L> <bmin> <bmax> <nb> <kmin> <kmax> <nk> <lambda> <q> "
-      "[ntherm nmeas nmd tau base_seed measure_every outdir]\n", argv[0]);
+      "[ntherm nmeas nmd tau base_seed measure_every outdir autotune]\n", argv[0]);
     return 1;
   }
   auto af = [&](int i, double d) { return i < argc ? std::atof(argv[i]) : d; };
@@ -53,6 +54,9 @@ int main(int argc, char** argv) {
   const std::uint64_t base_seed = static_cast<std::uint64_t>(ai(14, 1));
   const int    measure_every = static_cast<int>(ai(15, 1));
   const std::string outdir = (16 < argc) ? std::string(argv[16]) : std::string("u1scan_out");
+  // autotune (default ON): per-point, raise nmd from the given starting value until
+  // acceptance is in band -- fixes the stiff deep-Higgs (large kappa/q) points.
+  const int autotune = static_cast<int>(ai(17, 1));
 
   // Create the output directory if missing (idempotent; ignore "already exists").
   if (::mkdir(outdir.c_str(), 0755) != 0) { /* likely already exists -- proceed */ }
@@ -78,8 +82,8 @@ int main(int argc, char** argv) {
 
   std::fprintf(stderr, "# u1_scan: D=%d L=%d^%d q=%d lambda=%.4g grid=%dx%d (beta in [%.4g,%.4g], kappa in [%.4g,%.4g])\n",
                kDim, L, kDim, q, lambda, nb, nk, bmin, bmax, kmin, kmax);
-  std::fprintf(stderr, "# ntherm=%d nmeas=%d nmd=%d tau=%.4g base_seed=%llu measure_every=%d outdir=%s\n",
-               ntherm, nmeas, nmd, tau, (unsigned long long)base_seed, measure_every, outdir.c_str());
+  std::fprintf(stderr, "# ntherm=%d nmeas=%d nmd=%d(start) tau=%.4g base_seed=%llu measure_every=%d autotune=%d outdir=%s\n",
+               ntherm, nmeas, nmd, tau, (unsigned long long)base_seed, measure_every, autotune, outdir.c_str());
 
   for (int ib = 0; ib < nb; ++ib) {
     const Real beta = (nb <= 1) ? bmin : bmin + (bmax - bmin) * ib / (nb - 1);
@@ -94,6 +98,11 @@ int main(int argc, char** argv) {
       hmc.beta = beta; hmc.kappa = kappa; hmc.lambda = lambda; hmc.q = q; hmc.tau = tau; hmc.nmd = nmd;
       hmc.hot(0.8); hmc.cold_phi(0.5);
       for (int t = 0; t < ntherm; ++t) hmc.trajectory();
+      if (autotune) {
+        const u1::TuneResult tr = u1::tune_nmd<kDim>(hmc);  // extra thermalization + sets hmc.nmd
+        std::fprintf(stderr, "  node %d: autotuned nmd=%d (cal acc=%.3f in_band=%d)\n",
+                     node, hmc.nmd, tr.acceptance, (int)tr.in_band);
+      }
       hmc.traj_count = 0; hmc.accept_count = 0;
 
       // Per-node time series file.
