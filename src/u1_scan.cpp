@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
   if (argc < 10) {
     std::fprintf(stderr,
       "usage: %s <L> <bmin> <bmax> <nb> <kmin> <kmax> <nk> <lambda> <q> "
-      "[ntherm nmeas nmd tau base_seed measure_every outdir autotune]\n", argv[0]);
+      "[ntherm nmeas nmd tau base_seed measure_every outdir autotune n_scalar]\n", argv[0]);
     return 1;
   }
   auto af = [&](int i, double d) { return i < argc ? std::atof(argv[i]) : d; };
@@ -57,6 +57,10 @@ int main(int argc, char** argv) {
   // autotune (default ON): per-point, raise nmd from the given starting value until
   // acceptance is in band -- fixes the stiff deep-Higgs (large kappa/q) points.
   const int autotune = static_cast<int>(ai(17, 1));
+  // n_scalar (default 1 = single-timescale): scalar(+matter) sub-steps per gauge step
+  // (multi-timescale Sexton-Weingarten). >1 resolves the stiff scalar sector cheaply
+  // so the expensive gauge force stays on the coarse nmd timescale.
+  const int n_scalar = static_cast<int>(ai(18, 1));
 
   // Create the output directory if missing (idempotent; ignore "already exists").
   if (::mkdir(outdir.c_str(), 0755) != 0) { /* likely already exists -- proceed */ }
@@ -82,8 +86,8 @@ int main(int argc, char** argv) {
 
   std::fprintf(stderr, "# u1_scan: D=%d L=%d^%d q=%d lambda=%.4g grid=%dx%d (beta in [%.4g,%.4g], kappa in [%.4g,%.4g])\n",
                kDim, L, kDim, q, lambda, nb, nk, bmin, bmax, kmin, kmax);
-  std::fprintf(stderr, "# ntherm=%d nmeas=%d nmd=%d(start) tau=%.4g base_seed=%llu measure_every=%d autotune=%d outdir=%s\n",
-               ntherm, nmeas, nmd, tau, (unsigned long long)base_seed, measure_every, autotune, outdir.c_str());
+  std::fprintf(stderr, "# ntherm=%d nmeas=%d nmd=%d(start) tau=%.4g base_seed=%llu measure_every=%d autotune=%d n_scalar=%d outdir=%s\n",
+               ntherm, nmeas, nmd, tau, (unsigned long long)base_seed, measure_every, autotune, n_scalar, outdir.c_str());
 
   for (int ib = 0; ib < nb; ++ib) {
     const Real beta = (nb <= 1) ? bmin : bmin + (bmax - bmin) * ib / (nb - 1);
@@ -96,6 +100,7 @@ int main(int argc, char** argv) {
 
       u1::U1HMC<kDim> hmc(ext, seed);
       hmc.beta = beta; hmc.kappa = kappa; hmc.lambda = lambda; hmc.q = q; hmc.tau = tau; hmc.nmd = nmd;
+      hmc.n_scalar = n_scalar;
       hmc.hot(0.8); hmc.cold_phi(0.5);
       for (int t = 0; t < ntherm; ++t) hmc.trajectory();
       if (autotune) {

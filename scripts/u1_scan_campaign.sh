@@ -44,6 +44,8 @@ TAU=1.0
 MEASURE_EVERY=2
 CAMPAIGN_SEED=20260529         # campaign-wide seed offset (reproducibility)
 NDIM=4                         # the triple point is a D=4 object
+AUTOTUNE=1                     # per-point nmd auto-tune (1=on, 0=off)
+N_SCALAR=1                     # multi-timescale scalar sub-steps/gauge step (1=single, >1=Sexton-Weingarten)
 
 # ----------------------------- runtime defaults ------------------------------
 NCORES="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
@@ -135,7 +137,7 @@ if (( RUN == 0 )); then
   echo "DRY-RUN (no jobs launched). Re-run with --run to execute. Sample commands:"
   for i in 0 1 2; do
     (( i >= n_todo )) && break
-    echo "  OMP_NUM_THREADS=$THREADS $BIN ${JOB_L[i]} ${JOB_B[i]} ${JOB_B[i]} 1 ${JOB_K[i]} ${JOB_K[i]} 1 $LAMBDA ${JOB_Q[i]} $NTHERM $NMEAS $NMD $TAU ${JOB_SEED[i]} $MEASURE_EVERY ${JOB_DIR[i]}"
+    echo "  OMP_NUM_THREADS=$THREADS $BIN ${JOB_L[i]} ${JOB_B[i]} ${JOB_B[i]} 1 ${JOB_K[i]} ${JOB_K[i]} 1 $LAMBDA ${JOB_Q[i]} $NTHERM $NMEAS $NMD $TAU ${JOB_SEED[i]} $MEASURE_EVERY ${JOB_DIR[i]} $AUTOTUNE $N_SCALAR"
   done
   exit 0
 fi
@@ -145,7 +147,7 @@ mkdir -p "$OUTROOT"
 man="$OUTROOT/manifest.txt"
 {
   echo "# u1_scan campaign manifest  (NDIM=$NDIM)"
-  echo "# CAMPAIGN_SEED=$CAMPAIGN_SEED LAMBDA=$LAMBDA NTHERM=$NTHERM NMEAS=$NMEAS NMD=$NMD TAU=$TAU MEASURE_EVERY=$MEASURE_EVERY"
+  echo "# CAMPAIGN_SEED=$CAMPAIGN_SEED LAMBDA=$LAMBDA NTHERM=$NTHERM NMEAS=$NMEAS NMD=$NMD TAU=$TAU MEASURE_EVERY=$MEASURE_EVERY AUTOTUNE=$AUTOTUNE N_SCALAR=$N_SCALAR"
   echo "# columns: L q beta kappa base_seed outdir"
   for i in "${!JOB_L[@]}"; do
     echo "${JOB_L[i]} ${JOB_Q[i]} ${JOB_B[i]} ${JOB_K[i]} ${JOB_SEED[i]} ${JOB_DIR[i]}"
@@ -158,7 +160,7 @@ run_point() {  # L b k q seed dir
   local L="$1" b="$2" k="$3" q="$4" seed="$5" dir="$6"
   mkdir -p "$dir"
   OMP_NUM_THREADS="$THREADS" "$BIN" "$L" "$b" "$b" 1 "$k" "$k" 1 "$LAMBDA" "$q" \
-      "$NTHERM" "$NMEAS" "$NMD" "$TAU" "$seed" "$MEASURE_EVERY" "$dir" \
+      "$NTHERM" "$NMEAS" "$NMD" "$TAU" "$seed" "$MEASURE_EVERY" "$dir" "$AUTOTUNE" "$N_SCALAR" \
       > "$dir/run.log" 2>&1
 }
 
