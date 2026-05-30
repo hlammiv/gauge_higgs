@@ -555,6 +555,122 @@ def _edges(centers):
     return np.concatenate([[first], mids, [last]])
 
 
+def _mean_grid(group, obs):
+    """(betas, kappas, Z[nk,nb]) of the MEAN of obs over the grid (NaN where absent)."""
+    betas = group.beta_grid(); kappas = group.kappa_grid()
+    Z = np.full((len(kappas), len(betas)), np.nan)
+    for i, k in enumerate(kappas):
+        for j, b in enumerate(betas):
+            Z[i, j] = group.mean.get((round(b, 9), round(k, 9)), {}).get(obs, np.nan)
+    return np.array(betas), np.array(kappas), Z
+
+
+def _overlay_coulomb(ax, ridges):
+    if "coulomb" in ridges:
+        pts = sorted(ridges["coulomb"]["points"], key=lambda p: p[0])
+        ax.plot([p[1] for p in pts], [p[0] for p in pts], "o-", color="white",
+                mec="black", mew=1.2, ms=7, lw=2, label="Coulomb-confine")
+
+
+def _overlay_higgs(ax, ridges):
+    if "higgs" in ridges:
+        pts = sorted(ridges["higgs"]["points"], key=lambda p: p[0])
+        ax.plot([p[0] for p in pts], [p[1] for p in pts], "s--", color="red",
+                mec="black", mew=1.0, ms=7, lw=2, label="Higgs-confine")
+
+
+def _range_mid(group, obs):
+    """Midpoint of obs's mean-value range across the grid (None if absent)."""
+    vals = [m[obs] for m in group.mean.values() if obs in m and not math.isnan(m[obs])]
+    return 0.5 * (min(vals) + max(vals)) if vals else None
+
+
+def plot_group_panels(group, figdir):
+    """3-panel per-(L,q) figure: <monopole density> (confinement order parameter),
+    <link energy> (Higgs order parameter), and a phase classification map. Returns
+    the saved path or None. The single-observable heatmap cannot distinguish all
+    three phases (link energy is blind to confinement<->Coulomb); these panels show
+    the two complementary order parameters and a classification that fuses them."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap, BoundaryNorm
+
+    betas = group.beta_grid(); kappas = group.kappa_grid()
+    if not betas or not kappas:
+        return None
+    ridges = detect_boundaries(group)
+    have_rho = "monopole_density" in group.present
+    have_link = HIGGS_OBS in group.present
+    be = _edges(np.array(betas)); ke = _edges(np.array(kappas))
+    R_thr = _range_mid(group, "monopole_density")
+    L_thr = _range_mid(group, HIGGS_OBS)
+
+    fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(18.5, 5.6))
+
+    # Panel A: monopole density (large in confined, small in Coulomb/Higgs).
+    if have_rho:
+        _, _, ZA = _mean_grid(group, "monopole_density")
+        mA = axA.pcolormesh(be, ke, np.ma.masked_invalid(ZA), shading="auto", cmap="magma")
+        fig.colorbar(mA, ax=axA).set_label(r"$\langle\rho_M\rangle$")
+    else:
+        axA.text(0.5, 0.5, "monopole_density\nnot in data", ha="center", va="center",
+                 transform=axA.transAxes)
+    _overlay_coulomb(axA, ridges)
+    axA.set_title("monopole density\n(confinement order parameter)")
+
+    # Panel B: link energy (small at low kappa, large in the Higgs phase).
+    if have_link:
+        _, _, ZB = _mean_grid(group, HIGGS_OBS)
+        mB = axB.pcolormesh(be, ke, np.ma.masked_invalid(ZB), shading="auto", cmap="viridis")
+        fig.colorbar(mB, ax=axB).set_label(r"$\langle E_{\mathrm{link}}\rangle$")
+    else:
+        axB.text(0.5, 0.5, "link_energy\nnot in data", ha="center", va="center",
+                 transform=axB.transAxes)
+    _overlay_higgs(axB, ridges)
+    axB.set_title("link energy\n(Higgs order parameter)")
+
+    # Panel C: phase classification. Higgs if <link> high; else Confined if <rho_M>
+    # high (condensed monopoles), else Coulomb. Thresholds = midpoint of each
+    # observable's range (qualitative; the susceptibility-ridge LINES are the
+    # rigorous boundaries, overlaid).
+    P = np.full((len(kappas), len(betas)), np.nan)
+    for i, k in enumerate(kappas):
+        for j, b in enumerate(betas):
+            cell = group.mean.get((round(b, 9), round(k, 9)), {})
+            link = cell.get(HIGGS_OBS, float("nan"))
+            rho = cell.get("monopole_density", float("nan"))
+            if L_thr is not None and not math.isnan(link) and link >= L_thr:
+                P[i, j] = 2.0                              # Higgs
+            elif R_thr is not None and not math.isnan(rho):
+                P[i, j] = 0.0 if rho > R_thr else 1.0      # Confined : Coulomb
+            elif not math.isnan(link):
+                P[i, j] = 0.0                              # no rho -> cannot split
+    cmap = ListedColormap(["#3b4cc0", "#f2f0d8", "#b40426"])  # Confined, Coulomb, Higgs
+    norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+    mC = axC.pcolormesh(be, ke, np.ma.masked_invalid(P), shading="auto", cmap=cmap, norm=norm)
+    cbar = fig.colorbar(mC, ax=axC, ticks=[0, 1, 2])
+    cbar.ax.set_yticklabels(["Confined", "Coulomb", "Higgs"])
+    _overlay_coulomb(axC, ridges); _overlay_higgs(axC, ridges)
+    jt = junction(ridges)
+    if jt is not None:
+        axC.plot([jt[0]], [jt[1]], marker="*", ms=20, color="gold", mec="black", mew=1.3, lw=0)
+    axC.set_title("phase classification")
+
+    for ax in (axA, axB, axC):
+        ax.set_xlabel(r"$\beta$"); ax.set_ylabel(r"$\kappa$")
+    sup = "U(1) charge q=%d, L=%d" % (group.q, group.L)
+    if len(betas) <= 8 or len(kappas) <= 8:
+        sup += "  (coarse grid)"
+    fig.suptitle(sup)
+    fig.tight_layout()
+    os.makedirs(figdir, exist_ok=True)
+    out = os.path.join(figdir, "phase_q%d_L%d.png" % (group.q, group.L))
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    return out
+
+
 def plot_trajectory(groups, figdir):
     """Multi-q summary: overlay every group's ridges on one (beta,kappa) plot, and
     plot the junction (beta_t,kappa_t) vs q. Returns saved path or None."""
@@ -659,7 +775,7 @@ def run(campaign, ndim, figdir):
     figs = []
     for g in groups:
         try:
-            p = plot_group(g, figdir)
+            p = plot_group_panels(g, figdir)
             if p:
                 figs.append(p); print("# wrote %s" % p)
         except Exception as e:
