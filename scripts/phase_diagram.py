@@ -22,9 +22,10 @@ WHAT IT COMPUTES (numpy)
 
 BOUNDARY DETECTION (susceptibility ridges) -- per (L,q):
   We lay the points on the (beta,kappa) grid.
-   - Coulomb<->confinement line: use chi[monopole_density] if that column exists,
-     else chi[avg_plaquette]. For each fixed-kappa ROW, the beta of maximum chi is a
-     boundary point (kappa, beta*).
+   - Coulomb<->confinement line: chi[avg_plaquette] = V*Var(plaq), the plaquette
+     specific heat (PEAKS at beta_c). For each fixed-kappa ROW, the beta of maximum
+     chi is a boundary point (kappa, beta*). (V*Var(monopole_density) is monotone in
+     beta -- an order parameter, not a peaking susceptibility -- so it is NOT used.)
    - Higgs<->confinement line:   chi[link_energy]. For each fixed-beta COLUMN, the
      kappa of maximum chi is a boundary point (beta, kappa*).
   On a coarse grid "peak" is just the argmax over the available points (noted as
@@ -64,10 +65,20 @@ import numpy as np
 # Observables we know how to treat as intensive order-parameter proxies. The boundary
 # rules below reference these names; any are skipped silently if the column is absent.
 OBSERVABLES = ("avg_plaquette", "link_energy", "monopole_density")
-# Coulomb<->confinement ridge prefers the monopole density (the U(1) order parameter)
-# and falls back to the plaquette; Higgs<->confinement ridge uses the link energy.
-COULOMB_PREF = ("monopole_density", "avg_plaquette")
+# Coulomb<->confinement ridge uses the PLAQUETTE SPECIFIC HEAT chi = V*Var(plaq),
+# which PEAKS at beta_c. (V*Var(monopole_density) is NOT a peaking susceptibility:
+# the monopole density is an ORDER PARAMETER -- large and noisy deep in the confined
+# phase, dropping sharply across beta_c -- so its variance is monotone in beta and
+# argmax would wrongly land on the scan EDGE. The monopole density's sharp drop
+# corroborates beta_c as an order parameter, but is not used for the ridge argmax.)
+# Higgs<->confinement ridge uses the link-energy susceptibility.
+COULOMB_PREF = ("avg_plaquette",)
 HIGGS_OBS = "link_energy"
+# A transition line exists only where its susceptibility peak is SIGNIFICANT. Drop
+# ridge points whose chi falls below this fraction of the ridge's max chi -- this
+# truncates a line where the transition ceases (e.g. the Coulomb-confinement line in
+# the deep-Higgs region, where chi_plaq -> 0 and the per-row argmax is just noise).
+RIDGE_SIGNIF_FRAC = 0.15
 
 
 # --------------------------------------------------------------------------- I/O
@@ -293,6 +304,18 @@ def _coulomb_obs(group):
     return None
 
 
+def _significant(pts, frac=RIDGE_SIGNIF_FRAC):
+    """Keep only ridge points whose chi (tuple index 2) is >= frac * the ridge's max
+    chi. Truncates a ridge where the transition ceases (e.g. the Coulomb-confinement
+    line in the deep-Higgs region, where chi_plaq -> 0 and the argmax is noise)."""
+    if not pts:
+        return pts
+    cmax = max(p[2] for p in pts)
+    if not (cmax > 0):
+        return pts
+    return [p for p in pts if p[2] >= frac * cmax]
+
+
 def detect_boundaries(group):
     """Return ridge point sets for this group.
 
@@ -319,6 +342,7 @@ def detect_boundaries(group):
                     best = (c, b, group.chi_err_at(b, k, cobs))
             if best is not None:
                 pts.append((k, best[1], best[0], best[2]))
+        pts = _significant(pts)
         if pts:
             ridges["coulomb"] = dict(obs=cobs, points=pts)
 
@@ -332,6 +356,7 @@ def detect_boundaries(group):
                     best = (c, k, group.chi_err_at(b, k, HIGGS_OBS))
             if best is not None:
                 pts.append((b, best[1], best[0], best[2]))
+        pts = _significant(pts)
         if pts:
             ridges["higgs"] = dict(obs=HIGGS_OBS, points=pts)
 
