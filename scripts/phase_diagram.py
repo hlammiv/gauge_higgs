@@ -585,6 +585,21 @@ def _range_mid(group, obs):
     return 0.5 * (min(vals) + max(vals)) if vals else None
 
 
+def _ridge_interp(ridge):
+    """f(x)->y interpolating a ridge's (p[0],p[1]) points (clamped to the endpoints),
+    or None if the ridge is missing/empty. Used to classify cells by their position
+    relative to the drawn boundary lines, so the panel-C colors match the lines."""
+    if not ridge or not ridge.get("points"):
+        return None
+    pts = sorted(ridge["points"], key=lambda p: p[0])
+    xs = np.array([p[0] for p in pts], dtype=float)
+    ys = np.array([p[1] for p in pts], dtype=float)
+    if len(xs) == 1:
+        y0 = float(ys[0])
+        return lambda x: y0
+    return lambda x: float(np.interp(x, xs, ys))
+
+
 def plot_group_panels(group, figdir):
     """3-panel per-(L,q) figure: <monopole density> (confinement order parameter),
     <link energy> (Higgs order parameter), and a phase classification map. Returns
@@ -630,22 +645,32 @@ def plot_group_panels(group, figdir):
     _overlay_higgs(axB, ridges)
     axB.set_title("link energy\n(Higgs order parameter)")
 
-    # Panel C: phase classification. Higgs if <link> high; else Confined if <rho_M>
-    # high (condensed monopoles), else Coulomb. Thresholds = midpoint of each
-    # observable's range (qualitative; the susceptibility-ridge LINES are the
-    # rigorous boundaries, overlaid).
+    # Panel C: phase classification, CONSISTENT WITH THE DRAWN LINES. Classify each
+    # cell by its position relative to the detected ridges: Higgs if at/above the
+    # Higgs ridge kappa*(beta); else Coulomb if at/right-of the Coulomb ridge
+    # beta*(kappa); else Confined. The colored regions are therefore bounded exactly
+    # by the overlaid boundary lines. (Falls back to order-parameter midpoint
+    # thresholds only for a boundary whose ridge is absent.)
+    hk = _ridge_interp(ridges.get("higgs"))     # beta -> kappa* (Higgs line)
+    cb = _ridge_interp(ridges.get("coulomb"))   # kappa -> beta* (Coulomb line)
     P = np.full((len(kappas), len(betas)), np.nan)
     for i, k in enumerate(kappas):
         for j, b in enumerate(betas):
             cell = group.mean.get((round(b, 9), round(k, 9)), {})
             link = cell.get(HIGGS_OBS, float("nan"))
             rho = cell.get("monopole_density", float("nan"))
-            if L_thr is not None and not math.isnan(link) and link >= L_thr:
+            if math.isnan(link) and math.isnan(rho):
+                continue
+            is_higgs = (k >= hk(b)) if hk is not None else \
+                       (L_thr is not None and not math.isnan(link) and link >= L_thr)
+            if is_higgs:
                 P[i, j] = 2.0                              # Higgs
+            elif cb is not None:
+                P[i, j] = 1.0 if b >= cb(k) else 0.0       # Coulomb : Confined (by line)
             elif R_thr is not None and not math.isnan(rho):
-                P[i, j] = 0.0 if rho > R_thr else 1.0      # Confined : Coulomb
-            elif not math.isnan(link):
-                P[i, j] = 0.0                              # no rho -> cannot split
+                P[i, j] = 0.0 if rho > R_thr else 1.0      # fallback: rho threshold
+            else:
+                P[i, j] = 0.0
     cmap = ListedColormap(["#3b4cc0", "#f2f0d8", "#b40426"])  # Confined, Coulomb, Higgs
     norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
     mC = axC.pcolormesh(be, ke, np.ma.masked_invalid(P), shading="auto", cmap=cmap, norm=norm)
