@@ -175,6 +175,7 @@ struct U1HMC {
   Rng rng;
   Real beta = 1.0, kappa = 0.2, lambda = 0.5, tau = 1.0;
   int  q = 2, nmd = 20;
+  int  n_scalar = 1;  // fast scalar sub-steps per coarse gauge step (1 == single timescale)
   Integ integ = Integ::Omelyan2MN;
   std::uint64_t traj_count = 0, accept_count = 0;
   Real last_dH = 0.0;
@@ -198,9 +199,42 @@ struct U1HMC {
          + gauge_action<D>(th, lat, beta) + scalar_action<D>(phi, th, lat, q, kappa, lambda);
   }
 
+  // Combined single-timescale kick: gauge + matter -> p, scalar -> pi. Evaluates
+  // the (slow) gauge force once, so it is tallied in kick_count_gauge for an
+  // apples-to-apples gauge-force-evaluation count against the nested scheme.
   void kick(Real eps) {
     std::fill(Flink.begin(), Flink.end(), 0.0);
     add_gauge_force<D>(th, lat, beta, Flink);
+    add_matter_force<D>(phi, th, lat, q, kappa, Flink);
+    #pragma omp parallel for schedule(static)
+    for (std::size_t i = 0; i < p.size(); ++i) p[i] -= eps * Flink[i];
+    scalar_force<D>(phi, th, lat, q, kappa, lambda, Fphi);
+    #pragma omp parallel for schedule(static)
+    for (std::size_t i = 0; i < pi.size(); ++i) pi[i] += eps * Fphi[i];
+    ++kick_count_gauge;
+  }
+
+  // ---- multi-timescale (Sexton-Weingarten) force split ----------------------
+  // SLOW force = smooth gauge plaquette force only (on link momenta p). This is
+  // the term whose evaluation we want to keep RARE on the coarse timescale.
+  // FAST/STIFF force = the whole scalar sector: scalar_force on pi PLUS the matter
+  // back-reaction add_matter_force on p. The high-kappa / high-q stiffness lives
+  // entirely in this gauge-scalar coupling, so it is resolved on the fine grid.
+  // kick_count_gauge counts SLOW (gauge) force evaluations for cost accounting.
+  std::uint64_t kick_count_gauge = 0;
+
+  // SLOW kick: gauge plaquette force only -> link momenta p.  p -= eps * F_gauge.
+  void kick_gauge(Real eps) {
+    std::fill(Flink.begin(), Flink.end(), 0.0);
+    add_gauge_force<D>(th, lat, beta, Flink);
+    #pragma omp parallel for schedule(static)
+    for (std::size_t i = 0; i < p.size(); ++i) p[i] -= eps * Flink[i];
+    ++kick_count_gauge;
+  }
+
+  // FAST kick: full scalar sector. matter back-reaction -> p, scalar EOM -> pi.
+  void kick_fast(Real eps) {
+    std::fill(Flink.begin(), Flink.end(), 0.0);
     add_matter_force<D>(phi, th, lat, q, kappa, Flink);
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < p.size(); ++i) p[i] -= eps * Flink[i];
@@ -226,6 +260,64 @@ struct U1HMC {
       for (int i = 0; i < nmd; ++i) { drift(0.5 * eps); kick((1 - 2 * lam) * eps); drift(0.5 * eps); kick((i != nmd - 1 ? 2 * lam : lam) * eps); }
     }
   }
+  // ---- nested multi-timescale Sexton-Weingarten integrator -----------------
+  // OUTER: Omelyan-2MN (or leapfrog) over the SLOW gauge force, nmd coarse steps.
+  // INNER: each coarse "drift" interval H is replaced by a self-contained,
+  // symmetric Omelyan-2MN of n_scalar fine sub-steps over the FAST scalar(+matter)
+  // force together with the th/phi DRIFT. Because every inner integrator is itself
+  // time-symmetric and the outer slow-kick schedule is symmetric, the whole map is
+  // symmetric => reversible & symplectic for any n_scalar.
+  //
+  // The fast (matter+scalar) force depends on BOTH th and phi, and th is advanced
+  // by the link-momentum drift; both fields therefore live in the inner drift, so
+  // the gauge-scalar coupling is fully resolved on the fine grid while the slow
+  // gauge plaquette force is touched only nmd times per trajectory.
+  //
+  // n_scalar == 1 special case: reproduces the existing single-timescale combined
+  // Omelyan trajectory exactly (same operations, same coefficients).
+  void md_evolve_mts() {
+    if (n_scalar <= 1) { md_evolve(); return; }
+    const Real eps = tau / nmd;                  // coarse (slow / gauge) step
+    const Real lam = kOmelyanLambda;
+    if (integ == Integ::Leapfrog) {
+      kick_gauge(0.5 * eps);
+      for (int i = 0; i < nmd; ++i) {
+        inner_fast(eps);                         // fast Omelyan over the full coarse step
+        if (i != nmd - 1) kick_gauge(eps);
+      }
+      kick_gauge(0.5 * eps);
+    } else {
+      kick_gauge(lam * eps);
+      for (int i = 0; i < nmd; ++i) {
+        inner_fast(0.5 * eps);
+        kick_gauge((1.0 - 2.0 * lam) * eps);
+        inner_fast(0.5 * eps);
+        kick_gauge((i != nmd - 1 ? 2.0 * lam : lam) * eps);
+      }
+    }
+  }
+
+  // Symmetric Omelyan-2MN of n_scalar fine sub-steps over the FAST scalar(+matter)
+  // force and the th/phi drift, integrating over a coarse sub-interval H.
+  void inner_fast(Real H) {
+    const Real lam = kOmelyanLambda;
+    const int  m   = n_scalar;
+    const Real d   = H / m;                      // fine step
+    if (integ == Integ::Leapfrog) {
+      kick_fast(0.5 * d);
+      for (int j = 0; j < m; ++j) { drift(d); if (j != m - 1) kick_fast(d); }
+      kick_fast(0.5 * d);
+    } else {
+      kick_fast(lam * d);
+      for (int j = 0; j < m; ++j) {
+        drift(0.5 * d);
+        kick_fast((1.0 - 2.0 * lam) * d);
+        drift(0.5 * d);
+        kick_fast((j != m - 1 ? 2.0 * lam : lam) * d);
+      }
+    }
+  }
+
   void refresh_momenta() {
     const std::uint64_t sg = Rng::key(0x51, traj_count), ss = Rng::key(0x52, traj_count);
     for (std::int64_t s = 0; s < lat.vol; ++s) {
@@ -237,7 +329,7 @@ struct U1HMC {
     refresh_momenta();
     std::vector<Real> th0 = th; std::vector<Complex> phi0 = phi;
     const Real Hi = hamiltonian();
-    md_evolve();
+    if (n_scalar > 1) md_evolve_mts(); else md_evolve();
     const Real Hf = hamiltonian();
     last_dH = Hf - Hi; ++traj_count;
     const double r = rng.uniform(Rng::key(0x53, traj_count));
