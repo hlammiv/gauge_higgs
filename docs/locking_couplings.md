@@ -22,6 +22,7 @@ that this stratum is the GLOBAL minimum (vs other subgroups) — a further scan.
 | 2T (spin-3) | {6} | 7 | 0,2,6,12,20,30,42 | 0.113 | 0.453 | A0(x1)+ T triplets x3 |
 | 2O (spin-4) | {8} | 9 | 0,2,6,12,20,30,42,56,72 | 0.108 | 0.126 | x3,x2,x3,x3,x1,x2 (T,E,A) |
 | 2I (spin-6) | {12} | 13 | 0,2,6,12,20,30,42,56,72,90,110,132,156 | 0.065 | 0.213 | 2I multiplets (mostly x1; some x2,x3,x4) |
+| Q8 (spin-2)* | {4} | 5 | 0,2,6,12,20 | 0.2225 | 0.876 | SOFT lock: singlets 0.876,0.880(x2),0.894 + 1 modulus |
 | Sigma(108) | (2,2)={4,2} | 27 | 0,3,6,8,12,15,18,20,24 | 0.104 | 0.161 | octets x8 + x1,x2 |
 | Sigma(216) | (4,1)={5,1} | 35 | 0,3,6,8,12,15,20,24,30,35 | 0.109 | 0.143 | x8,x4,x8,x16,x16,x8,x1 |
 | Sigma(648) | (3,3)={6,3} | 64 | 0,3,6,8,12,15,18,20,24,27,30,35,36,38,42,48 | 0.093 | 0.050 | x8,x16,x3,x16,x8,x16,x4,x12,x16,x3,x8,x8,x1 |
@@ -35,6 +36,26 @@ that this stratum is the GLOBAL minimum (vs other subgroups) — a further scan.
 - **Sigma(216)**:  0.0213 0.0726 0.0376 0.2013 0.1806 0.0053 0.1992 0.0513 0.0476 0.1831
 - **Sigma(648)**:  0.0473 0.0603 0.0793 0.0903 0.0635 0.0196 0.0177 0.1235 0.0374 0.0141 0.0248 0.0884 0.0726 0.0333 0.0922 0.1359
 - **Sigma(1080)**: 0.1079 0.0906 0.3809 0.3968 0.0060 0.0028 0.0152
+- **Q8 (spin-2, complex)**: 0.2964 0.2648 0.0970 0.2946 0.0472
+
+### Controls for the SU(2) phase-diagram scan (NOT unique-singlet lockers)
+Two "expected-less-interesting" controls beneath 2T, to bracket the targets:
+- **Adjoint -> U(1)** (driver rep `adj`, spin-1, d=3): a CONTINUOUS residual. No locking f_c
+  needed -- a plain quartic (`auto`) Mexican hat breaks SU(2)->U(1) for any VEV direction
+  (Georgi-Glashow). The surviving massless photon is the control where "all gauge bosons
+  massive" FAILS; confirming it numerically is the W-mass observable (task #25).
+- **Q8 (spin-2, driver rep `4` COMPLEX)** with the f_c above (mu2=0.2225): a SOFT lock. The
+  Q8-singlet space in spin-2 is multiplicity-2 (character (1/8)[2(2j+1)+6(-1)^j]=2 at j=2),
+  so a biaxial-shape MODULUS survives (1 extra Goldstone beyond 3 gauge + 1 global U(1)).
+  The residual gauge group IS discrete Q8 (all 3 W's massive; gauge-orbit rank 3), but spin-2
+  is the natural-yet-non-unique Q8 irrep -- there is no clean RIGID single-small-irrep Q8
+  locker (spin-3's unique Q8-singlet coincides with its 2T-singlet, so it locks 2T).
+  BUG FOUND: do NOT use `4:real` for the alignment -- vacuum_alignment's real_rep=Re(phi)
+  projection assumes a manifestly-real basis, which GeneralRep's tensor basis is NOT, so it
+  lands on the wrong subspace and miscounts the Goldstones (gave a spurious O(2)/nzero=2).
+  All validated entries above use the COMPLEX treatment for the same reason (+1 global U(1)).
+  singlet_vev now picks the minimal-stabilizer (max gauge-orbit-rank) representative when the
+  singlet space is non-unique, so it lands on the biaxial Q8 point rather than uniaxial O(2).
 
 ALL 7 crystal-like subgroups done (SU(2): 2T,2O,2I; SU(3): Sigma(108),(216),(648),(1080)).
 (2I unblocked by the direct symmetric-rep basis for single-row Young diagrams; channel

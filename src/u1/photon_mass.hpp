@@ -44,11 +44,20 @@ inline Real reduce_angle(Real x) {
 }
 
 // Reduced (physical, principal-value) field strength F_{mu nu}(s) in [-pi,pi).
+// NOTE: u1/monopole.hpp defines an identical reduced_plaq_angle<D> template. A driver
+// that includes BOTH headers (e.g. u1_scan.cpp) would hit an in-TU template
+// redefinition (ODR error). Such a driver may #define GH_U1_HAVE_REDUCED_PLAQ_ANGLE
+// before including this header (after monopole.hpp) to suppress this definition and
+// reuse monopole.hpp's identical one. Standalone users (e.g. test_photon_mass.cpp)
+// leave the macro unset and get the definition here.
+#ifndef GH_U1_HAVE_REDUCED_PLAQ_ANGLE
+#define GH_U1_HAVE_REDUCED_PLAQ_ANGLE
 template <int D>
 inline Real reduced_plaq_angle(const std::vector<Real>& th, const Lattice<D>& lat,
                                std::int64_t s, int mu, int nu) {
   return reduce_angle(plaq_angle<D>(th, lat, s, mu, nu));
 }
+#endif
 
 // Per-config zero-spatial-momentum projection of the reduced electric field.
 // Returns timeslices[t][i] = S_i(t) = sum_{x: x[mu_t]=t} F_{mu_t, i+offset}(x),

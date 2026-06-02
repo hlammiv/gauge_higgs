@@ -27,6 +27,9 @@ struct GaugeHiggsHMC {
   int  nmd = 20;
   Integrator integ = Integrator::Omelyan2MN;
   bool reunit_each_traj = true;
+  bool frozen_phi = false;   // |phi_x|=1 frozen-length (sphere) scalar HMC: geodesic drift +
+                             // tangent-projected momentum, removing the radial |phi| mode so
+                             // kappa probes the gauge-Higgs transition, not radial condensation.
   // stats
   std::uint64_t traj_count = 0, accept_count = 0;
   Real last_dH = 0.0;
@@ -34,6 +37,50 @@ struct GaugeHiggsHMC {
   GaugeHiggsHMC(const std::array<int, D>& extents, const Representation<N>& R, std::uint64_t seed)
       : lat(extents), U(lat), P(lat), Flink(lat),
         phi(lat, R.d), pi(lat, R.d), Fphi(lat, R.d), rep(&R), rng(seed) {}
+
+  // ---- frozen-length |phi_x|=1 helpers (per-site sphere; real rep -> S^{d-1}, complex -> S^{2d-1}) ----
+  // Project pi onto the tangent space at phi (remove the radial part Re(phi^dag pi) phi), per site.
+  void project_pi_tangent() {
+    const int d = phi.d;
+    #pragma omp parallel for schedule(static)
+    for (std::int64_t s = 0; s < lat.vol; ++s) {
+      const std::size_t o = static_cast<std::size_t>(s) * d;
+      Real rp = 0.0;
+      for (int k = 0; k < d; ++k) rp += (std::conj(phi.data[o + k]) * pi.data[o + k]).real();
+      for (int k = 0; k < d; ++k) pi.data[o + k] -= Complex(rp, 0.0) * phi.data[o + k];
+    }
+  }
+  // Normalize each site to |phi_x|=1 (call once at init for a frozen-length run).
+  void normalize_phi() {
+    const int d = phi.d;
+    #pragma omp parallel for schedule(static)
+    for (std::int64_t s = 0; s < lat.vol; ++s) {
+      const std::size_t o = static_cast<std::size_t>(s) * d;
+      Real n2 = 0.0; for (int k = 0; k < d; ++k) n2 += std::norm(phi.data[o + k]);
+      if (n2 > 0.0) { const Real inv = 1.0 / std::sqrt(n2);
+        for (int k = 0; k < d; ++k) phi.data[o + k] *= Complex(inv, 0.0); }
+    }
+  }
+  // Exact great-circle (geodesic) drift of (phi,pi) on the unit sphere by time eps, per site:
+  //   phi' = cos(r eps) phi + sin(r eps) pi/r ,  pi' = -r sin(r eps) phi + cos(r eps) pi ,  r=|pi|.
+  // This is the exact constrained free flow: keeps |phi|=1 and pi tangent to machine precision,
+  // and is time-reversible -> a valid symplectic scalar drift for the frozen-length HMC.
+  void geodesic_drift(Real eps) {
+    const int d = phi.d;
+    #pragma omp parallel for schedule(static)
+    for (std::int64_t s = 0; s < lat.vol; ++s) {
+      const std::size_t o = static_cast<std::size_t>(s) * d;
+      Real r2 = 0.0; for (int k = 0; k < d; ++k) r2 += std::norm(pi.data[o + k]);
+      const Real r = std::sqrt(r2);
+      if (r < 1e-300) continue;
+      const Real c = std::cos(r * eps), sn = std::sin(r * eps);
+      for (int k = 0; k < d; ++k) {
+        const Complex f = phi.data[o + k], p = pi.data[o + k];
+        phi.data[o + k] = Complex(c, 0.0) * f + Complex(sn / r, 0.0) * p;
+        pi.data[o + k]  = Complex(-r * sn, 0.0) * f + Complex(c, 0.0) * p;
+      }
+    }
+  }
 
   Real hamiltonian() const {
     return P.kinetic() + pi.kinetic()
@@ -55,6 +102,7 @@ struct GaugeHiggsHMC {
     else           scalar_force<D, N>(phi, U, *rep, kappa, lambda, Fphi);
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < pi.data.size(); ++i) pi.data[i] += eps * Fphi.data[i];
+    if (frozen_phi) project_pi_tangent();   // drop the radial force component (|phi|=1 constraint)
   }
 
   void drift(Real eps) {
@@ -65,6 +113,7 @@ struct GaugeHiggsHMC {
         Pm *= Complex(eps, 0.0);
         U(s, mu) = expi<N>(Pm) * U(s, mu);
       }
+    if (frozen_phi) { geodesic_drift(eps); return; }   // |phi|=1: great-circle drift on the sphere
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < phi.data.size(); ++i) phi.data[i] += eps * pi.data[i];
   }
@@ -92,6 +141,7 @@ struct GaugeHiggsHMC {
     const std::uint64_t ss = Rng::key(0xD4, traj_count);
     P.refresh(rng, sg);
     pi.gaussian(rng, ss, rep->real);
+    if (frozen_phi) project_pi_tangent();   // Gaussian momentum restricted to the tangent space
   }
 
   bool trajectory() {

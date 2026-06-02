@@ -10,6 +10,7 @@
 #include "rep/finite_subgroups.hpp"
 #include <random>
 #include <algorithm>
+#include <cmath>
 
 namespace gh {
 
@@ -35,7 +36,51 @@ SingletVEV<N> singlet_vev(const Representation<N>& rep, const std::vector<Cmat<N
   }
   SingletVEV<N> out;
   out.multiplicity = (int)basis.size();
-  out.vev = basis.empty() ? DVec(d) : basis[0];
+  if (basis.empty()) {
+    out.vev = DVec(d);
+  } else if ((int)basis.size() == 1) {
+    out.vev = basis[0];                       // unique singlet (2T/2O/2I/Sigma...): no choice
+  } else {
+    // Multi-dim singlet space: pick the representative with the SMALLEST stabilizer (= the
+    // intended H). The broken-generator count = rank of the gauge orbit {T^a_R . v}_a, a
+    // GEOMETRIC quantity independent of the couplings (gauge Goldstones are always Hessian
+    // zero modes). A larger-stabilizer point has lower rank (real spin-2 uniaxial -> O(2),
+    // rank N^2-2=2); maximizing it lands on the generic stratum (biaxial -> Q8, rank
+    // N^2-1=3). Sample combinations (fixed seed -> deterministic), keep the max-rank /
+    // best-conditioned one. mult==1 groups never reach here, so their results are unchanged.
+    const int nT = static_cast<int>(rep.T.size());
+    auto broken_score = [&](const DVec& v) -> std::pair<int, Real> {
+      std::vector<DVec> tv(nT);
+      for (int a = 0; a < nT; ++a) tv[a] = rep.T[a] * v;
+      std::vector<Real> G(static_cast<std::size_t>(nT) * nT, 0.0);
+      for (int a = 0; a < nT; ++a)
+        for (int b = 0; b < nT; ++b) G[a * nT + b] = dot(tv[a], tv[b]).real();
+      std::vector<Real> ev = eig_sym(G, nT);
+      int rank = 0; Real minpos = 1e30;
+      for (Real e : ev) if (e > 1e-7) { ++rank; minpos = std::min(minpos, e); }
+      return {rank, (minpos < 1e29 ? minpos : 0.0)};
+    };
+    auto normalize = [&](DVec& v) {
+      const Real n = std::sqrt(v.norm2());
+      if (n > 1e-12) for (int k = 0; k < d; ++k) v(k) *= Complex(1.0 / n, 0);
+    };
+    DVec best = basis[0]; auto bestsc = broken_score(best);
+    std::mt19937_64 rng(20260601);
+    std::uniform_real_distribution<Real> U(-1.0, 1.0);
+    for (int trial = 0; trial < 200; ++trial) {
+      DVec v(d);
+      for (int j = 0; j < (int)basis.size(); ++j) {
+        const Real w = U(rng);
+        for (int k = 0; k < d; ++k) v(k) += Complex(w, 0) * basis[j](k);
+      }
+      normalize(v);
+      auto sc = broken_score(v);
+      if (sc.first > bestsc.first || (sc.first == bestsc.first && sc.second > bestsc.second)) {
+        best = v; bestsc = sc;
+      }
+    }
+    out.vev = best;
+  }
   // invariance: max_h ||D(h) vev - vev||
   Real worst = 0;
   for (const auto& h : H) {

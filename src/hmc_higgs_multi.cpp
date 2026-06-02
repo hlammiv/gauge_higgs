@@ -11,6 +11,7 @@
 #include "hmc/gauge_higgs_hmc.hpp"
 #include "action/scalar_invariants.hpp"
 #include "measure/observables.hpp"
+#include "measure/autocorr.hpp"
 #include "rep/rep_fundamental.hpp"
 #include "rep/rep_adjoint.hpp"
 #include "rep/rep_general.hpp"
@@ -19,6 +20,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <fstream>
 #include <memory>
 
 using namespace gh;
@@ -38,7 +40,7 @@ static std::unique_ptr<Representation<kN>> make_rep(std::string spec) {
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr,
-      "usage: %s <rep> <L> <beta> <kappa> <mu2> <couplings|auto> [ntherm=80 nmeas=200 nmd=24 tau=1 seed=1]\n"
+      "usage: %s <rep> <L> <beta> <kappa> <mu2> <couplings|auto> [ntherm=80 nmeas=200 nmd=24 tau=1 seed=1 ts_outfile]\n"
       "  run with just <rep> to print the channel C2 values and the required #couplings.\n", argv[0]);
     return 1;
   }
@@ -63,6 +65,7 @@ int main(int argc, char** argv) {
   const int  nmd    = static_cast<int>(argi(9, 24));
   const Real tau    = argf(10, 1.0);
   const std::uint64_t seed = static_cast<std::uint64_t>(argi(11, 1));
+  const std::string ts_out = (argc > 12) ? std::string(argv[12]) : std::string();  // per-traj time series
 
   std::vector<Real> f;
   if (std::string(argv[6]) == "auto") f.assign(ch.n_channels(), 1.0);
@@ -75,26 +78,46 @@ int main(int argc, char** argv) {
   std::array<int, kDim> L{}; for (int mu = 0; mu < kDim; ++mu) L[mu] = Lext;
   GaugeHiggsHMC<kDim, kN> hmc(L, *rep, seed);
   hmc.beta = beta; hmc.kappa = kappa; hmc.tau = tau; hmc.nmd = nmd; hmc.potential = &pot;
-  std::printf("# D=%d SU(%d) L=%d^%d  beta=%.3f kappa=%.3f mu2=%.3f nmd=%d  potential=multi-invariant\n",
-              kDim, kN, Lext, kDim, beta, kappa, mu2, nmd);
+  const bool frozen = (std::getenv("GH_FROZEN") != nullptr);   // |phi_x|=1 frozen-length scalar
+  hmc.frozen_phi = frozen;
+  std::printf("# D=%d SU(%d) L=%d^%d  beta=%.3f kappa=%.3f mu2=%.3f nmd=%d  potential=multi-invariant%s\n",
+              kDim, kN, Lext, kDim, beta, kappa, mu2, nmd, frozen ? "  [FROZEN |phi|=1]" : "");
 
   hmc.U.hot(hmc.rng, 0.8);
   hmc.phi.gaussian(hmc.rng, 12345, rep->real, 0.3);
+  if (frozen) hmc.normalize_phi();   // project onto |phi_x|=1 before thermalizing
   for (int t = 0; t < ntherm; ++t) hmc.trajectory();
 
   hmc.traj_count = 0; hmc.accept_count = 0;
   Stats plaq, Lphi, Llink; double sExp = 0.0;
   const double V = static_cast<double>(hmc.lat.vol);
+  std::vector<Real> ll_series, pl_series;            // per-trajectory series for tau_int
+  ll_series.reserve(nmeas); pl_series.reserve(nmeas);
   for (int t = 0; t < nmeas; ++t) {
     hmc.trajectory();
-    plaq.add(avg_plaquette<kDim, kN>(hmc.U));
-    Lphi.add(higgs_length<kDim>(hmc.phi));
-    Llink.add(link_energy<kDim, kN>(hmc.phi, hmc.U, *rep));
+    const Real pv = avg_plaquette<kDim, kN>(hmc.U);
+    const Real lv = higgs_length<kDim>(hmc.phi);
+    const Real kv = link_energy<kDim, kN>(hmc.phi, hmc.U, *rep);
+    plaq.add(pv); Lphi.add(lv); Llink.add(kv);
+    pl_series.push_back(pv); ll_series.push_back(kv);
     sExp += std::exp(-hmc.last_dH);
   }
+  // Per-trajectory time series -> file (tau_int / blocking / thermalization checks).
+  if (!ts_out.empty()) {
+    std::ofstream f(ts_out);
+    f << "# traj plaq L_link  (rep=" << rep->name() << " beta=" << beta
+      << " kappa=" << kappa << " mu2=" << mu2 << " nmd=" << nmd << ")\n";
+    for (int t = 0; t < nmeas; ++t) f << t << ' ' << pl_series[t] << ' ' << ll_series[t] << '\n';
+  }
+  int W_ll = 0; const Real tau_ll = tau_int(ll_series, &W_ll);
+  const Real neff = effective_sample_size(ll_series);
   std::printf("plaquette   = %.6f +/- %.6f\n", plaq.mean(), plaq.binned_error());
   std::printf("L_phi       = %.6f +/- %.6f\n", Lphi.mean(), Lphi.binned_error());
-  std::printf("L_link      = %.6f +/- %.6f   chi_link=%.4f\n", Llink.mean(), Llink.binned_error(), Llink.susceptibility(V));
+  // L_link error is now the autocorrelation-aware (Madras-Sokal) estimate, not naive.
+  std::printf("L_link      = %.6f +/- %.6f   chi_link=%.4f\n",
+              Llink.mean(), autocorr_error(ll_series), Llink.susceptibility(V));
+  std::printf("autocorr    = tau_int(L_link)=%.2f window=%d  N_eff=%.1f / %d meas\n",
+              tau_ll, W_ll, neff, nmeas);
   std::printf("acceptance  = %.4f   <exp(-dH)>=%.5f\n", hmc.acceptance(), sExp / nmeas);
   return 0;
 }

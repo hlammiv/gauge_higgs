@@ -8,9 +8,14 @@ a.out
 .claude/
 
 # Scan-campaign output (time series, summaries, logs -- can be large; reproducible
-# from scripts/u1_scan_campaign.sh + the committed manifest)
-u1scan_campaign/
-u1scan_out/
+# from the committed scripts/configs). Data DIRS only; the scripts under scripts/ stay tracked.
+u1scan*/
+su2scan*/
+su2_stage0/
+su2diag/
+*_local*.log
+# transient review/scratch
+_review_tmp/
 
 # Copyrighted / unpublished literature (re-fetchable via literature/_fetch.sh)
 *.pdf

@@ -64,6 +64,18 @@ inline std::vector<Cmat<2>> gens_2I() {
   Cmat<2> s = mat2(Complex(ph2,pi2), 0.5, -0.5, Complex(ph2,-pi2));
   return {gi, s};
 }
+// Binary dihedral / quaternion group Q8 = preimage in SU(2) of the Klein four-group
+// V4 = {1, R_x(pi), R_y(pi), R_z(pi)} subset SO(3). Generators i*sigma_1, i*sigma_2
+// close to {+-I, +-i sigma_1, +-i sigma_2, +-i sigma_3} (order 8). Smallest crystal-like
+// SU(2) subgroup -- the "real control" beneath 2T: a single REAL spin-2 (l=2) Higgs on
+// the biaxial stratum (3 distinct quadrupole eigenvalues) breaks SU(2)->Q8; the uniaxial
+// stratum instead leaves a continuous O(2). See [[discrete-observables-program]].
+inline std::vector<Cmat<2>> gens_Q8() {
+  using namespace detail;
+  Cmat<2> a = mat2(0, I_, I_, 0);    // i*sigma_1 = [[0,i],[i,0]]
+  Cmat<2> b = mat2(0, 1, -1, 0);     // i*sigma_2 = [[0,1],[-1,0]]
+  return {a, b};
+}
 
 // ---- SU(3) Sigma series (Delta(27) blocks E,C + extra generators) ----
 inline Cmat<3> su3_E() { using namespace detail; return mat3({0,1,0, 0,0,1, 1,0,0}); }

@@ -18,7 +18,11 @@ static void run(const Representation<N>& rep, const std::vector<Cmat<N>>& gens,
   CasimirChannels<N> ch(rep);
   auto res = find_stable_couplings<N>(ch, sv.vev, rep.real, nsamples, 12345);
   const int ngauge = N * N - 1;
-  const int expect_zero = rep.real ? ngauge : ngauge + 1;  // +1 global U(1) for complex reps
+  // zero modes = gauge Goldstones (broken generators, all eaten) + 1 global U(1) for a
+  // complex rep + (multiplicity-1) flat MODULI when the H-singlet space is NOT unique.
+  // Unique-singlet lockers (2T/2O/2I/Sigma, mult=1) add 0; Q8 in spin-2 has mult=2 -> one
+  // biaxial-shape modulus -> a SOFT lock (the residual gauge group is still discrete Q8).
+  const int expect_zero = (rep.real ? ngauge : ngauge + 1) + (sv.multiplicity - 1);
 
   char m[96];
   std::snprintf(m, sizeof m, "%s: VEV H-invariant", name);  CHECK(sv.invariance < 1e-8, m);
@@ -49,6 +53,14 @@ int main(int argc, char** argv) {
   std::printf("-- SU(2) binary polyhedral (2T spin-3, 2O spin-4) --\n");
   { GeneralRep<2> r({6});  run<2>(r, gens_2T(), "2T  (spin-3)", 800); }
   { GeneralRep<2> r({8});  run<2>(r, gens_2O(), "2O  (spin-4)", 800); }
+  // Q8 control: spin-2 (l=2), COMPLEX like the other SU(2) entries (the GeneralRep tensor
+  // basis is NOT manifestly real, so vacuum_alignment's real_rep=Re(phi) projection lands
+  // on the wrong subspace and miscounts -- do NOT use :real here). The Q8-singlet space is
+  // mult=2 (verified; character (1/8)[2(2j+1)+6(-1)^j]=2 at j=2): singlet_vev's orbit-rank
+  // selector picks the BIAXIAL representative -> discrete Q8 gauge residual (all 3 W's
+  // massive), but a biaxial-shape MODULUS survives -> expect_zero = 3 gauge + 1 U(1) + 1
+  // modulus = 5. A SOFT lock (spin-2 is the natural-but-non-unique Q8 irrep).
+  { GeneralRep<2> r({4}); run<2>(r, gens_Q8(), "Q8  (spin-2, soft/modulus)", 4000); }
   std::printf("\n-- SU(3) Sigma series --\n");
   { GeneralRep<3> r({4, 2}); run<3>(r, gens_Sigma108(), "Sigma(108) (2,2)", 600); }
   if (all) {  // heavier / larger coupling-search; 2I now buildable via the symmetric-rep basis
