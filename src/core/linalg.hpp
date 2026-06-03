@@ -196,6 +196,27 @@ inline DMat operator-(const DMat& A, const DMat& B) {
 inline DMat operator*(DMat A, Complex s) { for (auto& z : A.a) z *= s; return A; }
 inline Real fnorm(const DMat& A) { Real s = 0; for (const auto& z : A.a) s += std::norm(z); return std::sqrt(s); }
 
+// exp(i H) for a Hermitian d x d DMat H, via scaling-and-squaring + Taylor (same
+// algorithm as the validated generic expi<N>, ported to dynamic-size DMat). Result
+// is unitary. Used by the GeneralRep fast path: D^(R)(U) = exp(i w.T_R).
+inline DMat dmat_expi(const DMat& H) {
+  const int d = H.rows;
+  const Real nrm = fnorm(H);
+  int s = 0; Real scaled = nrm;
+  while (scaled > 0.5) { scaled *= 0.5; ++s; }
+  const Real inv2s = std::pow(0.5, s);
+  DMat A = H * Complex(0.0, inv2s);            // i H / 2^s
+  DMat term = DMat::identity(d);
+  DMat result = DMat::identity(d);
+  for (int k = 1; k <= 18; ++k) {
+    term = term * A;
+    term = term * Complex(1.0 / k, 0.0);
+    result = result + term;
+  }
+  for (int i = 0; i < s; ++i) result = result * result;
+  return result;
+}
+
 // Re Tr(A^dag B) — real inner product on the space of matrices.
 inline Real reTrDagProd(const DMat& A, const DMat& B) {
   Real s = 0.0;

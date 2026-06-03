@@ -83,8 +83,10 @@ int main(int argc, char** argv) {
   std::printf("# D=%d SU(%d) L=%d^%d  beta=%.3f kappa=%.3f mu2=%.3f nmd=%d  potential=multi-invariant%s\n",
               kDim, kN, Lext, kDim, beta, kappa, mu2, nmd, frozen ? "  [FROZEN |phi|=1]" : "");
 
-  hmc.U.hot(hmc.rng, 0.8);
-  hmc.phi.gaussian(hmc.rng, 12345, rep->real, 0.3);
+  // Start config: hot (disordered) by default; GH_COLD -> cold (ordered: identity links +
+  // aligned phi). Hot-vs-cold hysteresis at fixed (beta,kappa) is the first-order test.
+  if (std::getenv("GH_COLD")) { hmc.U.cold(); hmc.phi.cold(1.0); }
+  else { hmc.U.hot(hmc.rng, 0.8); hmc.phi.gaussian(hmc.rng, 12345, rep->real, 0.3); }
   if (frozen) hmc.normalize_phi();   // project onto |phi_x|=1 before thermalizing
   for (int t = 0; t < ntherm; ++t) hmc.trajectory();
 

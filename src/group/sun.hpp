@@ -78,4 +78,74 @@ Real unitarity_violation(const Cmat<N>& U) {
   return d.fnorm();
 }
 
+// --- Fundamental-link log: w with exp(i w.T_F) = U (inverse of expi(alg_to_mat(w))) ---
+// Used by the GeneralRep fast path D^(R)(U) = exp(i w.T_R). Any valid branch of the log
+// works: the rep is a homomorphism, so exp(i w.T_R) reproduces D^(R)(U) regardless of
+// which w (mod 2pi shifts) maps to U in the fundamental.
+
+// Small complex N x N inverse (Gauss-Jordan, partial pivot). General N.
+template <int N>
+Cmat<N> inverse(Cmat<N> A) {
+  Cmat<N> Inv = Cmat<N>::identity();
+  for (int col = 0; col < N; ++col) {
+    int piv = col; Real best = std::abs(A(col, col));
+    for (int r = col + 1; r < N; ++r) { Real v = std::abs(A(r, col)); if (v > best) { best = v; piv = r; } }
+    if (piv != col)
+      for (int j = 0; j < N; ++j) { std::swap(A(col, j), A(piv, j)); std::swap(Inv(col, j), Inv(piv, j)); }
+    const Complex invd = Complex(1.0, 0.0) / A(col, col);
+    for (int j = 0; j < N; ++j) { A(col, j) *= invd; Inv(col, j) *= invd; }
+    for (int r = 0; r < N; ++r) if (r != col) {
+      const Complex f = A(r, col);
+      if (f == Complex(0, 0)) continue;
+      for (int j = 0; j < N; ++j) { A(r, j) -= f * A(col, j); Inv(r, j) -= f * Inv(col, j); }
+    }
+  }
+  return Inv;
+}
+
+// Principal matrix square root via Denman-Beavers (small N; quadratic convergence).
+template <int N>
+Cmat<N> sqrt_mat(const Cmat<N>& A) {
+  Cmat<N> Y = A, Z = Cmat<N>::identity();
+  for (int it = 0; it < 60; ++it) {
+    Cmat<N> Yi = inverse<N>(Y), Zi = inverse<N>(Z);
+    Cmat<N> Yn = (Y + Zi) * Complex(0.5, 0.0);
+    Cmat<N> Zn = (Z + Yi) * Complex(0.5, 0.0);
+    Y = Yn; Z = Zn;
+    Cmat<N> r = Y * Y - A;
+    if (r.fnorm() < 1e-14) break;
+  }
+  return Y;
+}
+
+// General N: X = -i log U via inverse-scaling-squaring + Mercator series; w = mat_to_alg(X).
+template <int N>
+AlgVec<N> fund_alg(const Cmat<N>& U) {
+  const Cmat<N> I = Cmat<N>::identity();
+  Cmat<N> V = U; int s = 0;
+  while ((V - I).fnorm() > 0.3 && s < 50) { V = sqrt_mat<N>(V); ++s; }
+  const Cmat<N> E = V - I;                       // log V = log(I+E) = sum_k (-1)^{k+1} E^k / k
+  Cmat<N> Ek = E, logV = E;
+  for (int k = 2; k <= 40; ++k) {
+    Ek = Ek * E;
+    logV += Ek * Complex(((k % 2) ? 1.0 : -1.0) / k, 0.0);
+  }
+  const Cmat<N> logU = logV * Complex(std::pow(2.0, s), 0.0);   // log U = 2^s log(U^{1/2^s})
+  const Cmat<N> X = (logU * Complex(0.0, -1.0)).herm();         // -i log U (Hermitian); herm = denoise
+  return mat_to_alg<N>(X);
+}
+
+// SU(2) closed form (exact, robust): U = cos r I + i (sin r / r) H, H = w.T traceless Hermitian.
+template <>
+inline AlgVec<2> fund_alg<2>(const Cmat<2>& U) {
+  const Real c = 0.5 * U.trace().real();                       // = cos r
+  const Real cc = std::max(-1.0, std::min(1.0, c));
+  const Real r = std::acos(cc);
+  const Real sinc = (r < 1e-8) ? 1.0 : std::sin(r) / r;        // sin r / r
+  const Real invsinc = (std::fabs(sinc) > 1e-12) ? 1.0 / sinc : 0.0;
+  // antiherm(U) = (U - U^dag)/2 = i sinc H  =>  H = -i antiherm(U) / sinc.
+  const Cmat<2> H = U.antiherm() * Complex(0.0, -invsinc);
+  return mat_to_alg<2>(H);
+}
+
 }  // namespace gh

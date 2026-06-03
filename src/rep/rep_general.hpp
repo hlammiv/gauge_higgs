@@ -19,6 +19,7 @@
 // for small irreps; for large irreps switch rep_matrix to the cached exp(i w.T_R)
 // path. N^n is capped (kMaxTensorDim) to stay safe.
 #include "rep/rep_fundamental.hpp"  // generators<N>, cmat_to_dmat
+#include "group/sun.hpp"            // expi, fund_alg, dmat_expi (fast path)
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
@@ -38,6 +39,7 @@ struct GeneralRep : Representation<N> {
   std::vector<std::vector<Complex>> W;   // orthonormal basis of the irrep subspace in V^{xn}
   std::vector<Complex> Wflat;            // contiguous [l*dimT + i] copy of W for fast lift/project
   std::string repname;
+  bool use_fast = false;                 // exp(i w.T_R) fast path (set by self-check; see ctor)
 
   // Convert SU(N) Dynkin labels [a_1..a_{N-1}] to Young row lengths.
   static std::vector<int> rows_from_dynkin(const std::vector<int>& dynkin) {
@@ -77,13 +79,33 @@ struct GeneralRep : Representation<N> {
     repname = "general[";
     for (std::size_t i = 0; i < rows.size(); ++i) repname += (i ? "," : "") + std::to_string(rows[i]);
     repname += "]";
+    enable_fast_if_valid();
   }
 
   std::string name() const override { return repname; }
 
-  // D^(R)(U) = <W_k| U^{xn} |W_l>. Materializes the full d x d matrix (used by tests/
-  // characters). The hot-path operations below avoid building it.
+  // D^(R)(U): fast path exp(i w.T_R) (enabled by the self-check for large irreps), else
+  // the tensor materialization <W_k| U^{xn} |W_l>. Both yield the same matrix (verified).
   DMat rep_matrix(const Cmat<N>& U) const override {
+    return use_fast ? fast_D(U) : rep_matrix_tensor(U);
+  }
+
+  // exp(i w.T_R), w extracted from the fundamental link (homomorphism). O(d^3) vs O(N^n):
+  // wins for large irreps (e.g. SU(2) spin-6 = {12}: d=13 but N^n = 2^12 = 4096).
+  DMat fast_D(const Cmat<N>& U) const {
+    const AlgVec<N> w = fund_alg<N>(U);
+    DMat A(this->d, this->d);                            // A = sum_a w[a] T^a_R (Hermitian)
+    for (int a = 0; a < n_gen<N>(); ++a) {
+      const Real wa = w[a];
+      if (wa == 0.0) continue;
+      const DMat& Ta = this->T[a];
+      for (std::size_t i = 0; i < A.a.size(); ++i) A.a[i] += wa * Ta.a[i];
+    }
+    return dmat_expi(A);
+  }
+
+  // Tensor materialization: ground truth + fallback when the fast path is off.
+  DMat rep_matrix_tensor(const Cmat<N>& U) const {
     const int d = static_cast<int>(W.size());
     DMat D(d, d);
     for (int l = 0; l < d; ++l) {
@@ -94,15 +116,38 @@ struct GeneralRep : Representation<N> {
     return D;
   }
 
-  // Fast path: apply D^(R)(U) (or its dagger) to ONE vector via lift -> U^{xn} -> project,
-  // never forming the d x d matrix. Cost O(d*N^n + n*N^{n+1}) vs O(d^2*N^n) for the matrix.
-  DVec rotate(const Cmat<N>& U, const DVec& phi) const override { return apply_tensor(U, phi, false); }
-  DVec rotate_dag(const Cmat<N>& U, const DVec& phi) const override { return apply_tensor(U, phi, true); }
+  // Hot path: fast (one d x d expm + matvec) when enabled, else matrix-free tensor apply.
+  DVec rotate(const Cmat<N>& U, const DVec& phi) const override {
+    return use_fast ? fast_D(U) * phi : apply_tensor(U, phi, false);
+  }
+  DVec rotate_dag(const Cmat<N>& U, const DVec& phi) const override {
+    return use_fast ? fast_D(U).dagger() * phi : apply_tensor(U, phi, true);
+  }
   AlgVec<N> hop_link_g(const Cmat<N>& U, const DVec& phi_x, const DVec& phi_y) const override {
-    const DVec Dy = apply_tensor(U, phi_y, false);
+    const DVec Dy = use_fast ? (fast_D(U) * phi_y) : apply_tensor(U, phi_y, false);
     AlgVec<N> g{};
     for (int a = 0; a < n_gen<N>(); ++a) g[a] = -2.0 * dot(phi_x, this->T[a] * Dy).imag();
     return g;
+  }
+
+  // Enable exp(i w.T_R) only when it is (a) cheaper than the tensor apply AND (b) verified
+  // to reproduce the tensor matrix on generic test links. Unsupported/ill-conditioned cases
+  // (e.g. an N with no validated fund_alg) silently keep the exact tensor path -> the physics
+  // is correct for ANY N; the fast path is a pure, checked speedup for large irreps.
+  void enable_fast_if_valid() {
+    use_fast = false;
+    const double dd = static_cast<double>(this->d);
+    const double expm_cost   = 24.0 * dd * dd * dd;
+    const double tensor_cost = (2.0 * dd + 2.0 * n * N) * static_cast<double>(dimT);
+    if (tensor_cost <= 1.3 * expm_cost) return;          // tiny irreps: tensor already cheap
+    Real worst = 0.0;
+    for (int t = 0; t < 3; ++t) {
+      AlgVec<N> v{};
+      for (int a = 0; a < n_gen<N>(); ++a) v[a] = 0.37 * std::sin(1.0 + a + 2.0 * t) + 0.11 * (t + 1);
+      const Cmat<N> Ut = expi<N>(alg_to_mat<N>(v));       // a generic SU(N) link
+      worst = std::max(worst, fnorm(fast_D(Ut) - rep_matrix_tensor(Ut)));
+    }
+    use_fast = (worst < 1e-7);
   }
 
  private:
