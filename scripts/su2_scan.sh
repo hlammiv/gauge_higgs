@@ -19,8 +19,8 @@ NTHERM=${NTHERM:-500}; NMEAS=${NMEAS:-800}; TAU=1.0; SEED0=${SEED0:-20260602}; L
 # Unquoted assignment word-splits on IFS (space AND newline), so this handles BOTH a
 # space-separated env override (BETAS="2.5 2.75 3.0") and seq's newline-separated default.
 # shellcheck disable=SC2206
-BETAS=(  ${BETAS:-$(seq -f '%.2f' 1.0 0.25 3.0)}  )     # 9: 1.00..3.00
-KAPPAS=( ${KAPPAS:-$(seq -f '%.1f' 0.0 0.1 1.0)}  )     # 11: 0.0..1.0
+BETAS=(  ${BETAS:-$(seq -f '%.2f' ${BLO:-1.0} ${BSTEP:-0.25} ${BHI:-3.0})}  )  # default 1..3; BLO/BHI/BSTEP for space-free range (nested ssh)
+KAPPAS=( ${KAPPAS:-$(seq -f '%.2f' ${KLO:-0.0} ${KSTEP:-0.1} ${KHI:-1.0})} )  # default 0..1; KHI/KSTEP for wide range (space-free, survives nested ssh)
 REPS=(   ${REPS:-adj Q8soft 2T 2O 2I}             )
 JOBS=${JOBS:-$(nproc)}
 # Optional kappa cap (space-free, survives nested ssh): e.g. KMAX=0.7 for the costly 2I.
@@ -39,11 +39,13 @@ SPEC[2I]="12:0.065:0.1182,0.0819,0.0353,0.0274,0.1550,0.0828,0.0157,0.0702,0.108
 
 # adaptive nmd(label,kappa,base): 2I uses an explicit stiff table (d=13 needs fine steps deep
 # in the Higgs phase); other reps scale base up by 60% above kappa~0.5.
+# nmd scales up with kappa (hopping force ~kappa): the k<=7 tiers reproduce the values
+# that already give acc~1.0; higher tiers added for the deep-Higgs (high-kappa) extension.
 nmd_for() {
   if [[ "$1" == "2I" ]]; then
-    awk -v k="$2" 'BEGIN{ if(k<=0.21)print 16; else if(k<=0.31)print 28; else if(k<=0.51)print 44; else if(k<=0.71)print 56; else print 68 }'
+    awk -v k="$2" 'BEGIN{ if(k<=0.21)print 16; else if(k<=0.31)print 28; else if(k<=0.51)print 44; else if(k<=0.71)print 56; else if(k<=8)print 68; else if(k<=14)print 96; else print 128 }'
   else
-    awk -v k="$2" -v b="$3" 'BEGIN{ f=(k>0.51)?1.6:1.0; print int(b*f+0.999) }'
+    awk -v k="$2" -v b="$3" 'BEGIN{ if(k<=0.51)f=1.0; else if(k<=8)f=1.6; else if(k<=14)f=2.4; else f=3.2; print int(b*f+0.999) }'
   fi
 }
 
