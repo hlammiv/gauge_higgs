@@ -199,22 +199,53 @@ inline Real fnorm(const DMat& A) { Real s = 0; for (const auto& z : A.a) s += st
 // exp(i H) for a Hermitian d x d DMat H, via scaling-and-squaring + Taylor (same
 // algorithm as the validated generic expi<N>, ported to dynamic-size DMat). Result
 // is unitary. Used by the GeneralRep fast path: D^(R)(U) = exp(i w.T_R).
+// No-alloc hot path: all intermediates live in thread-local scratch (grown once,
+// reused across calls) so the very high call rate of GeneralRep::fast_D does not
+// churn the heap allocator -- that churn was the parallel memory-bandwidth limiter.
 inline DMat dmat_expi(const DMat& H) {
   const int d = H.rows;
+  const std::size_t dd = static_cast<std::size_t>(d) * d;
   const Real nrm = fnorm(H);
   int s = 0; Real scaled = nrm;
   while (scaled > 0.5) { scaled *= 0.5; ++s; }
   const Real inv2s = std::pow(0.5, s);
-  DMat A = H * Complex(0.0, inv2s);            // i H / 2^s
-  DMat term = DMat::identity(d);
-  DMat result = DMat::identity(d);
-  for (int k = 1; k <= 18; ++k) {
-    term = term * A;
-    term = term * Complex(1.0 / k, 0.0);
-    result = result + term;
+
+  static thread_local std::vector<Complex> bA, bT, bR, bX;
+  if (bA.size() < dd) { bA.resize(dd); bT.resize(dd); bR.resize(dd); bX.resize(dd); }
+  Complex* A = bA.data(); Complex* term = bT.data();
+  Complex* result = bR.data(); Complex* tmp = bX.data();
+
+  const Complex sc(0.0, inv2s);
+  for (std::size_t i = 0; i < dd; ++i) A[i] = H.a[i] * sc;                 // A = i H / 2^s
+  for (std::size_t i = 0; i < dd; ++i) { term[i] = Complex(0, 0); result[i] = Complex(0, 0); }
+  for (int i = 0; i < d; ++i) { term[i * d + i] = Complex(1, 0); result[i * d + i] = Complex(1, 0); }
+
+  auto matmul = [d](const Complex* X, const Complex* Y, Complex* out) {    // out = X*Y (out distinct)
+    for (int i = 0; i < d; ++i) {
+      Complex* orow = out + static_cast<std::size_t>(i) * d;
+      for (int j = 0; j < d; ++j) orow[j] = Complex(0, 0);
+      const Complex* xrow = X + static_cast<std::size_t>(i) * d;
+      for (int k = 0; k < d; ++k) {
+        const Complex xik = xrow[k];
+        if (xik == Complex(0, 0)) continue;
+        const Complex* yrow = Y + static_cast<std::size_t>(k) * d;
+        for (int j = 0; j < d; ++j) orow[j] += xik * yrow[j];
+      }
+    }
+  };
+
+  for (int k = 1; k <= 18; ++k) {                       // result += (iH/2^s)^k / k!
+    matmul(term, A, tmp);                                // tmp = term * A
+    const Real invk = 1.0 / k;
+    for (std::size_t i = 0; i < dd; ++i) { term[i] = tmp[i] * invk; result[i] += term[i]; }
   }
-  for (int i = 0; i < s; ++i) result = result * result;
-  return result;
+  for (int i = 0; i < s; ++i) {                          // square s times
+    matmul(result, result, tmp);
+    Complex* t = result; result = tmp; tmp = t;          // pointer swap (no copy)
+  }
+  DMat out(d, d);
+  for (std::size_t i = 0; i < dd; ++i) out.a[i] = result[i];
+  return out;
 }
 
 // Re Tr(A^dag B) — real inner product on the space of matrices.
