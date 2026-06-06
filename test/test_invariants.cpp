@@ -130,6 +130,38 @@ static void test_gradient_fd(const Representation<N>& rep, std::uint64_t seed, c
   CHECK_CLOSE(worst, 0.0, 1e-5, m);
 }
 
+// Hot-path optimization guard: the CACHED dV_dphibar (MultiInvariantPotential, via the
+// prebuilt phi-independent superoperator Asuper) must reproduce the REFERENCE per-channel
+// CasimirChannels::dV_dphibar (which test_gradient_fd anchors to finite difference).
+// Compared RELATIVELY because the degree-(n_ch-1) Lagrange projector is roundoff-limited at
+// large d (~2e-8 rel at d=13); a genuine bug in the hoist is O(1) and fails any of these.
+template <int N>
+static void test_cached_matches_reference(const Representation<N>& rep, std::uint64_t seed,
+                                          Real tol, const char* tag) {
+  CasimirChannels<N> ch(rep);
+  std::mt19937_64 rng(seed);
+  std::normal_distribution<Real> gd(0.0, 0.7);
+  std::vector<Real> f(ch.n_channels());
+  Real worst_rel = 0;
+  for (int trial = 0; trial < 3; ++trial) {                 // several random coupling sets
+    for (auto& x : f) x = gd(rng);
+    const Real mu2 = gd(rng);
+    MultiInvariantPotential<N> pot(ch, f, mu2);             // builds + uses the cached Asuper
+    DVec phi(rep.d);
+    for (int e = 0; e < rep.d; ++e) phi(e) = Complex(gd(rng), gd(rng));
+    const DVec gref = ch.dV_dphibar(phi, f, mu2);           // reference (uncached) path
+    const DVec gopt = pot.dV_dphibar(phi);                  // cached path under test
+    Real num = 0, den = 0;
+    for (int e = 0; e < rep.d; ++e) {
+      num = std::max(num, std::abs(gopt(e) - gref(e)));
+      den = std::max(den, std::abs(gref(e)));
+    }
+    worst_rel = std::max(worst_rel, num / (den > 0 ? den : 1.0));
+  }
+  char m[80]; std::snprintf(m, sizeof m, "cached dV_dphibar == reference (%s, rel)", tag);
+  CHECK_CLOSE(worst_rel, 0.0, tol, m);
+}
+
 int main() {
   std::printf("-- SU(2) channel Casimir eigenvalues --\n");
   test_su2_channels();
@@ -142,5 +174,10 @@ int main() {
   { GeneralRep<3> r10({3, 0}); test_gradient_fd<3>(r10, 102, "SU3 10"); }
   std::printf("-- multi-invariant potential wired into HMC --\n");
   { GeneralRep<2> r({3}); CasimirChannels<2> ch(r); test_hmc_multiinv<3, 2>(r, ch, 301, "SU2 spin-3/2 d=4"); }
+  std::printf("-- cached dV_dphibar == reference (hot-path optimization guard) --\n");
+  { GeneralRep<2> r2({2});  test_cached_matches_reference<2>(r2, 401, 1e-10, "SU2 {2}=adj d=3"); }
+  { GeneralRep<2> r6({6});  test_cached_matches_reference<2>(r6, 402, 1e-9,  "SU2 {6} d=7"); }
+  { AdjointRep<3> a3;       test_cached_matches_reference<3>(a3, 403, 1e-9,  "SU3 adj d=8"); }
+  { GeneralRep<2> r12({12}); test_cached_matches_reference<2>(r12, 404, 1e-6, "SU2 {12}=2I d=13"); }
   return report("test_invariants");
 }

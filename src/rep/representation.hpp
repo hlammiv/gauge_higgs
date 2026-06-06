@@ -45,6 +45,44 @@ struct Representation {
     return g;
   }
 
+  // ---- Cache-aware variants (pure memoization) ----------------------------------------
+  // Within ONE force evaluation (kick) U is fixed, so D^(R)(U_link) can be built once per
+  // link and reused across rotate / rotate_dag / hop_link_g in BOTH the scalar force and the
+  // matter back-reaction (otherwise GeneralRep recomputes fast_D ~3x per link per kick).
+  // These take a precomputed D^(R)(U) and apply it identically to the U-taking variants, so
+  // the HMC trajectory is BIT-IDENTICAL with or without the cache. cache_rep_matrix() builds
+  // the matrix the caller stores; for non-fast/tensor reps it is just rep_matrix(U).
+  virtual DMat cache_rep_matrix(const Cmat<N>& U) const { return rep_matrix(U); }
+  // Whether a precomputed-D^(R)(U) cache reproduces this rep's rotate/hop EXACTLY. True for
+  // any rep whose rotate is rep_matrix(U)*phi. GeneralRep overrides: only its fast (matrix)
+  // path is cacheable; its matrix-free tensor path stays per-call (still bit-identical).
+  virtual bool link_cacheable() const { return true; }
+  // All three _cached helpers are __attribute__((noinline)): GeneralRep's per-call rotate /
+  // rotate_dag / hop_link_g (fast path) delegate to these SAME bodies, and the per-link-cache
+  // force loops call them directly. Forcing ONE out-of-line implementation means -march=native
+  // FMA contraction cannot fuse the matvec / dagger / projection differently at the two call
+  // sites (which otherwise drifts the result by ~1 ULP, up to ~1e-14 in hop_link_g, and
+  // compounds chaotically over an MD trajectory). With noinline the cache is BIT-IDENTICAL to
+  // the per-call path. The call overhead is negligible: each runs O(d^2)..O(d^2 n_gen) work.
+  // D^(R)(U) phi  (D supplied).
+  __attribute__((noinline)) DVec rotate_cached(const DMat& D, const DVec& phi) const {
+    return D * phi;
+  }
+  // D^(R)(U)^dag phi  (D supplied, not yet daggered).
+  __attribute__((noinline)) DVec rotate_dag_cached(const DMat& D, const DVec& phi) const {
+    const DMat Dd = D.dagger();
+    return Dd * phi;
+  }
+  // hop_link_g with D^(R)(U) supplied. Identical arithmetic to hop_link_g(U,...).
+  __attribute__((noinline)) AlgVec<N> hop_link_g_cached(const DMat& D, const DVec& phi_x,
+                                                        const DVec& phi_y) const {
+    const DVec Dy = D * phi_y;
+    AlgVec<N> g{};
+    for (int a = 0; a < n_gen<N>(); ++a)
+      g[a] = -2.0 * dot(phi_x, T[a] * Dy).imag();
+    return g;
+  }
+
   // Runtime self-consistency: Tr(T^a_R T^b_R) = T(R) delta^{ab}, sum_a T^a_R T^a_R = C2(R) I.
   // Returns max deviation from those (given the expected Dynkin index and Casimir).
   Real invariant_violation(Real dynkin_T, Real casimir_C2) const {

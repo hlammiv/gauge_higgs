@@ -22,6 +22,7 @@
 //
 // Build (auto-discovered, default NDIM=4 NCOL=2):  make build/gh_string
 #include "hmc/gauge_higgs_hmc.hpp"
+#include "core/profile.hpp"
 #include "action/scalar_invariants.hpp"
 #include "measure/observables.hpp"
 #include "measure/creutz.hpp"
@@ -29,6 +30,7 @@
 #include "rep/rep_fundamental.hpp"
 #include "rep/rep_adjoint.hpp"
 #include "rep/rep_general.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -98,6 +100,9 @@ int main(int argc, char** argv) {
   std::array<int, kDim> L{}; for (int mu = 0; mu < kDim; ++mu) L[mu] = Lext;
   GaugeHiggsHMC<kDim, kN> hmc(L, *rep, seed);
   hmc.beta = beta; hmc.kappa = kappa; hmc.tau = tau; hmc.nmd = nmd; hmc.potential = &pot;
+  // Test hook: GH_NO_LINK_CACHE disables the per-link D^(R)(U) cache (per-call fast_D path).
+  // Used only to verify the cache is pure memoization (cache-on vs cache-off bit-identical).
+  if (std::getenv("GH_NO_LINK_CACHE")) hmc.use_link_cache = false;
   const bool frozen = (std::getenv("GH_FROZEN") != nullptr);   // |phi_x|=1 frozen-length scalar
   hmc.frozen_phi = frozen;
 
@@ -119,6 +124,26 @@ int main(int argc, char** argv) {
   else { hmc.U.hot(hmc.rng, 0.8); hmc.phi.gaussian(hmc.rng, 12345, rep->real, 0.3); }
   if (frozen) hmc.normalize_phi();   // project onto |phi_x|=1 before thermalizing
   for (int t = 0; t < ntherm; ++t) hmc.trajectory();
+
+#ifdef GH_PROFILE
+  // Profiling-only isolation path: run PURE MD (nmeas trajectories' worth of
+  // md_evolve, no hamiltonian/measurement/accept) so the GH_PROFILE breakdown
+  // is uncontaminated by observable sweeps. Enabled with GH_PROF_MDONLY=1.
+  if (std::getenv("GH_PROF_MDONLY")) {
+    hmc.refresh_momenta();   // populate momenta once (geometry-only; not timed-critical)
+    const auto _t0 = std::chrono::steady_clock::now();
+    for (int t = 0; t < nmeas; ++t) hmc.md_evolve();
+    const double _wall = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - _t0).count();
+    const long _steps = static_cast<long>(nmeas) * hmc.nmd;
+    std::printf("\n## GH_PROF_MDONLY: %d trajectories x nmd=%d = %ld MD steps\n",
+                nmeas, hmc.nmd, _steps);
+    std::printf("## total MD wall = %.4f s   per-MD-step = %.4f s\n",
+                _wall, _steps ? _wall / _steps : 0.0);
+    GH_PROF_REPORT();
+    return 0;
+  }
+#endif
 
   hmc.traj_count = 0; hmc.accept_count = 0;
   Stats plaq, Lphi, Llink, poly;

@@ -87,6 +87,66 @@ struct CasimirChannels {
     return g;
   }
 
+  // ---- phi-INDEPENDENT precompute (HMC hot path) ------------------------------
+  // dV_dphibar's per-channel projector P_c is the SAME Lagrange polynomial in the
+  // Casimir superoperator for every phi -- only M=phi phi^dag changes. The whole
+  // sum_c f[c]*2*P_c is a fixed LINEAR superoperator A on the d x d matrix space.
+  // We materialize A once as a (d^2) x (d^2) matrix Asuper by feeding the EXACT
+  // apply_proj/apply_casimir code path the basis matrices E_{ij} -- so the cache
+  // reproduces apply_proj to within roundoff (it REORDERS floating-point ops, so it
+  // is NOT bit-identical; it matches the reference to the algorithm's full RELATIVE
+  // precision -- the degree-(n_ch-1) Lagrange projector is itself roundoff-limited at
+  // large d, e.g. ~2e-8 relative at d=13). dV then costs one d^2 x d^2 matvec + one
+  // d x d matvec per site instead of O(n_ch^2 * n_gen * d^3).
+  // Layout: vec index = i*d + j for matrix entry (i,j); Asuper is (d^2) x (d^2).
+  std::vector<Complex> build_combined_superop(const std::vector<Real>& f) const {
+    const int dd = d * d;
+    std::vector<Complex> Asuper(static_cast<std::size_t>(dd) * dd, Complex(0, 0));
+    for (int i = 0; i < d; ++i)
+      for (int j = 0; j < d; ++j) {
+        DMat E(d, d); E(i, j) = Complex(1, 0);     // basis matrix E_{ij}
+        DMat AE(d, d);                              // AE = sum_c f[c]*2*P_c(E_{ij})
+        for (int c = 0; c < n_channels(); ++c) {
+          if (f[c] == 0.0) continue;
+          AE = AE + apply_proj(c, E) * Complex(2.0 * f[c], 0);
+        }
+        const int col = i * d + j;
+        for (int p = 0; p < d; ++p)
+          for (int q = 0; q < d; ++q)
+            Asuper[static_cast<std::size_t>(p * d + q) * dd + col] = AE(p, q);
+      }
+    return Asuper;
+  }
+
+  // Fast dV_dphibar using a prebuilt combined superoperator (build_combined_superop).
+  // g = -mu2 phi + A(M) phi, with vec(A(M)) = Asuper * vec(M), M=phi phi^dag.
+  DVec dV_dphibar_cached(const DVec& phi, const std::vector<Complex>& Asuper, Real mu2) const {
+    const int dd = d * d;
+    // vec(M)_{i*d+j} = phi_i conj(phi_j)
+    std::vector<Complex> vM(static_cast<std::size_t>(dd));
+    for (int i = 0; i < d; ++i) {
+      const Complex pi = phi(i);
+      for (int j = 0; j < d; ++j) vM[static_cast<std::size_t>(i) * d + j] = pi * std::conj(phi(j));
+    }
+    // AM = reshape(Asuper * vec(M))  (d x d)
+    DMat AM(d, d);
+    for (int r = 0; r < dd; ++r) {
+      const Complex* row = Asuper.data() + static_cast<std::size_t>(r) * dd;
+      Complex acc(0, 0);
+      for (int k = 0; k < dd; ++k) acc += row[k] * vM[k];
+      AM.a[r] = acc;
+    }
+    // g = -mu2 phi + AM * phi
+    DVec g(d);
+    for (int p = 0; p < d; ++p) {
+      Complex acc = Complex(-mu2, 0) * phi(p);
+      const Complex* arow = AM.a.data() + static_cast<std::size_t>(p) * d;
+      for (int q = 0; q < d; ++q) acc += arow[q] * phi(q);
+      g(p) = acc;
+    }
+    return g;
+  }
+
  private:
   // Distinct eigenvalues of Chat via Lanczos in the d x d matrix space (Hermitian
   // operator, real inner product Re Tr(A^dag B)); generic Hermitian start sees every
@@ -135,10 +195,16 @@ struct MultiInvariantPotential : OnsitePotential<N> {
   const CasimirChannels<N>* ch = nullptr;
   std::vector<Real> f;
   Real mu2 = 0.0;
+  // Combined phi-INDEPENDENT superoperator A = sum_c f[c]*2*P_c, materialized once
+  // (d^2 x d^2). dV_dphibar is the dominant MD cost; this hoists its entire
+  // projector/Casimir rebuild out of the per-site inner loop. See build_combined_superop.
+  // NOTE: built from f at construction -- f is fixed for the potential's lifetime
+  // (all call sites pass f to the ctor and never mutate it afterward).
+  std::vector<Complex> Asuper;
   MultiInvariantPotential(const CasimirChannels<N>& c, std::vector<Real> ff, Real m)
-      : ch(&c), f(std::move(ff)), mu2(m) {}
+      : ch(&c), f(std::move(ff)), mu2(m), Asuper(c.build_combined_superop(f)) {}
   Real value(const DVec& phi) const override { return ch->value(phi, f, mu2); }
-  DVec dV_dphibar(const DVec& phi) const override { return ch->dV_dphibar(phi, f, mu2); }
+  DVec dV_dphibar(const DVec& phi) const override { return ch->dV_dphibar_cached(phi, Asuper, mu2); }
 };
 
 }  // namespace gh

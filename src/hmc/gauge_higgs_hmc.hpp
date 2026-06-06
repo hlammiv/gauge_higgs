@@ -7,6 +7,7 @@
 #include "action/gauge_wilson.hpp"
 #include "action/scalar_higgs.hpp"
 #include "hmc/hmc.hpp"  // for Integrator enum
+#include "core/profile.hpp"  // GH_PROF_* (no-op unless -DGH_PROFILE)
 #include <cmath>
 
 namespace gh {
@@ -27,6 +28,13 @@ struct GaugeHiggsHMC {
   int  nmd = 20;
   Integrator integ = Integrator::Omelyan2MN;
   bool reunit_each_traj = true;
+  // Per-kick D^(R)(U_link) cache [layout s*D+mu]. Within one kick U is fixed, so each link's
+  // rep matrix is built ONCE here and reused across rotate/rotate_dag/hop_link_g in both the
+  // scalar force and the matter back-reaction (GeneralRep otherwise recomputes fast_D ~3x per
+  // link). Pure memoization -> bit-identical HMC. Only enabled for link_cacheable() reps
+  // (e.g. the GeneralRep fast path); others keep the per-call path unchanged.
+  std::vector<DMat> Dcache;
+  bool use_link_cache = false;
   bool frozen_phi = false;   // |phi_x|=1 frozen-length (sphere) scalar HMC: geodesic drift +
                              // tangent-projected momentum, removing the radial |phi| mode so
                              // kappa probes the gauge-Higgs transition, not radial condensation.
@@ -36,7 +44,19 @@ struct GaugeHiggsHMC {
 
   GaugeHiggsHMC(const std::array<int, D>& extents, const Representation<N>& R, std::uint64_t seed)
       : lat(extents), U(lat), P(lat), Flink(lat),
-        phi(lat, R.d), pi(lat, R.d), Fphi(lat, R.d), rep(&R), rng(seed) {}
+        phi(lat, R.d), pi(lat, R.d), Fphi(lat, R.d), rep(&R), rng(seed) {
+    use_link_cache = R.link_cacheable();
+    if (use_link_cache) Dcache.resize(static_cast<std::size_t>(lat.vol) * D);
+  }
+
+  // Rebuild the per-link D^(R)(U) cache for the CURRENT U (call once at the start of each kick).
+  void build_Dcache() {
+    GH_PROF_SCOPE(build_Dcache);
+    #pragma omp parallel for schedule(static)
+    for (std::int64_t s = 0; s < lat.vol; ++s)
+      for (int mu = 0; mu < D; ++mu)
+        Dcache[static_cast<std::size_t>(s) * D + mu] = rep->cache_rep_matrix(U(s, mu));
+  }
 
   // ---- frozen-length |phi_x|=1 helpers (per-site sphere; real rep -> S^{d-1}, complex -> S^{2d-1}) ----
   // Project pi onto the tangent space at phi (remove the radial part Re(phi^dag pi) phi), per site.
@@ -90,16 +110,24 @@ struct GaugeHiggsHMC {
   }
 
   void kick(Real eps) {
+    GH_PROF_SCOPE(kick);
+    // U is fixed across this kick: build each link's D^(R)(U) once and reuse it across the
+    // matter back-reaction and the scalar force (kills GeneralRep's ~3x fast_D recompute).
+    if (use_link_cache) build_Dcache();
+    const std::vector<DMat>* dc = use_link_cache ? &Dcache : nullptr;
     // link force: gauge staple + matter staple ; P -= eps F
     Flink.zero();
-    add_gauge_force<D, N>(U, beta, Flink);
-    add_matter_link_force<D, N>(phi, U, *rep, kappa, Flink);
+    { GH_PROF_SCOPE(add_gauge_force);
+      add_gauge_force<D, N>(U, beta, Flink); }
+    { GH_PROF_SCOPE(add_matter_link_force);
+      add_matter_link_force<D, N>(phi, U, *rep, kappa, Flink, dc); }
     #pragma omp parallel for schedule(static)
     for (std::int64_t i = 0; i < static_cast<std::int64_t>(P.p.size()); ++i)
       for (int a = 0; a < n_gen<N>(); ++a) P.p[i][a] -= eps * Flink.p[i][a];
     // scalar force ; pi += eps F_phi
-    if (potential) scalar_force<D, N>(phi, U, *rep, kappa, *potential, Fphi);
-    else           scalar_force<D, N>(phi, U, *rep, kappa, lambda, Fphi);
+    { GH_PROF_SCOPE(scalar_force);
+    if (potential) scalar_force<D, N>(phi, U, *rep, kappa, *potential, Fphi, dc);
+    else           scalar_force<D, N>(phi, U, *rep, kappa, lambda, Fphi, dc); }
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < pi.data.size(); ++i) pi.data[i] += eps * Fphi.data[i];
     if (frozen_phi) project_pi_tangent();   // drop the radial force component (|phi|=1 constraint)

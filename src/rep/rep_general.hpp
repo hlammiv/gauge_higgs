@@ -20,6 +20,7 @@
 // path. N^n is capped (kMaxTensorDim) to stay safe.
 #include "rep/rep_fundamental.hpp"  // generators<N>, cmat_to_dmat
 #include "group/sun.hpp"            // expi, fund_alg, dmat_expi (fast path)
+#include "core/profile.hpp"         // GH_PROF_* (no-op unless -DGH_PROFILE)
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
@@ -93,16 +94,29 @@ struct GeneralRep : Representation<N> {
   // exp(i w.T_R), w extracted from the fundamental link (homomorphism). O(d^3) vs O(N^n):
   // wins for large irreps (e.g. SU(2) spin-6 = {12}: d=13 but N^n = 2^12 = 4096).
   DMat fast_D(const Cmat<N>& U) const {
-    const AlgVec<N> w = fund_alg<N>(U);
+    GH_PROF_SCOPE(fast_D);
+    AlgVec<N> w;
+    { GH_PROF_SCOPE(fast_D_fund_alg);
+      w = fund_alg<N>(U); }
     DMat A(this->d, this->d);                            // A = sum_a w[a] T^a_R (Hermitian)
-    for (int a = 0; a < n_gen<N>(); ++a) {
-      const Real wa = w[a];
-      if (wa == 0.0) continue;
-      const DMat& Ta = this->T[a];
-      for (std::size_t i = 0; i < A.a.size(); ++i) A.a[i] += wa * Ta.a[i];
+    { GH_PROF_SCOPE(fast_D_Abuild);
+      for (int a = 0; a < n_gen<N>(); ++a) {
+        const Real wa = w[a];
+        if (wa == 0.0) continue;
+        const DMat& Ta = this->T[a];
+        for (std::size_t i = 0; i < A.a.size(); ++i) A.a[i] += wa * Ta.a[i];
+      }
     }
+    GH_PROF_SCOPE(fast_D_expi);
     return dmat_expi(A);
   }
+
+  // Per-link D^(R)(U) cache hook (pure memoization; see Representation). Only the fast
+  // (exp(i w.T_R)) path produces a matrix that rotate/rotate_dag/hop_link_g use verbatim;
+  // when the fast path is off we keep the matrix-free tensor apply (link_cacheable()==false),
+  // so the cached and non-cached HMC trajectories are bit-identical in both modes.
+  bool link_cacheable() const override { return use_fast; }
+  DMat cache_rep_matrix(const Cmat<N>& U) const override { return fast_D(U); }
 
   // Tensor materialization: ground truth + fallback when the fast path is off.
   DMat rep_matrix_tensor(const Cmat<N>& U) const {
@@ -117,16 +131,30 @@ struct GeneralRep : Representation<N> {
   }
 
   // Hot path: fast (one d x d expm + matvec) when enabled, else matrix-free tensor apply.
+  // The fast branch routes through the SAME *_cached body the per-link D cache uses, so the
+  // cached and per-call paths are BIT-IDENTICAL (not merely ULP-close): a single inlined
+  // implementation removes any -march=native FMA-contraction divergence between the two.
   DVec rotate(const Cmat<N>& U, const DVec& phi) const override {
-    return use_fast ? fast_D(U) * phi : apply_tensor(U, phi, false);
+    GH_PROF_SCOPE(rotate);
+    if (!use_fast) return apply_tensor(U, phi, false);
+    const DMat D = fast_D(U);
+    GH_PROF_SCOPE(rotate_matvec);
+    return this->rotate_cached(D, phi);
   }
   DVec rotate_dag(const Cmat<N>& U, const DVec& phi) const override {
-    return use_fast ? fast_D(U).dagger() * phi : apply_tensor(U, phi, true);
+    GH_PROF_SCOPE(rotate_dag);
+    if (!use_fast) return apply_tensor(U, phi, true);
+    const DMat D = fast_D(U);
+    GH_PROF_SCOPE(rotate_dag_matvec);
+    return this->rotate_dag_cached(D, phi);
   }
   AlgVec<N> hop_link_g(const Cmat<N>& U, const DVec& phi_x, const DVec& phi_y) const override {
-    const DVec Dy = use_fast ? (fast_D(U) * phi_y) : apply_tensor(U, phi_y, false);
+    GH_PROF_SCOPE(hop_link_g);
+    if (use_fast) { const DMat D = fast_D(U); return this->hop_link_g_cached(D, phi_x, phi_y); }
+    const DVec Dy = apply_tensor(U, phi_y, false);
     AlgVec<N> g{};
-    for (int a = 0; a < n_gen<N>(); ++a) g[a] = -2.0 * dot(phi_x, this->T[a] * Dy).imag();
+    { GH_PROF_SCOPE(hop_link_g_proj);
+      for (int a = 0; a < n_gen<N>(); ++a) g[a] = -2.0 * dot(phi_x, this->T[a] * Dy).imag(); }
     return g;
   }
 
