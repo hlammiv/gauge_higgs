@@ -22,6 +22,7 @@
 //
 // Build (auto-discovered, default NDIM=4 NCOL=2):  make build/gh_string
 #include "hmc/gauge_higgs_hmc.hpp"
+#include "hmc/gauge_link_updater.hpp"
 #include "core/profile.hpp"
 #include "action/scalar_invariants.hpp"
 #include "measure/observables.hpp"
@@ -124,7 +125,15 @@ int main(int argc, char** argv) {
   if (std::getenv("GH_COLD")) { hmc.U.cold(); hmc.phi.cold(1.0); }
   else { hmc.U.hot(hmc.rng, 0.8); hmc.phi.gaussian(hmc.rng, 12345, rep->real, 0.3); }
   if (frozen) hmc.normalize_phi();   // project onto |phi_x|=1 before thermalizing
-  for (int t = 0; t < ntherm; ++t) hmc.trajectory();
+  // Tunneling-capable gauge-link updater (center flip / heatbath / metro) run between
+  // HMC trajectories. Default OFF (env GH_GUPD unset) -> behavior unchanged. Lets the
+  // SU(2)->2T scan cross the first-order freezing barrier that local HMC cannot tunnel.
+  //   GH_GUPD="ncenter,nhb,nmetro[,width,hits]"  (e.g. GH_GUPD=4,1,2,0.5,20)
+  const GaugeUpdaterCfg gupd = GaugeUpdaterCfg::from_env(std::getenv("GH_GUPD"));
+  for (int t = 0; t < ntherm; ++t) {
+    hmc.trajectory();
+    if (gupd.enabled) run_gauge_update<kDim, kN>(hmc, gupd, hmc.traj_count);
+  }
 
 #ifdef GH_PROFILE
   // Profiling-only isolation path: run PURE MD (nmeas trajectories' worth of
@@ -170,6 +179,7 @@ int main(int argc, char** argv) {
 
   for (int t = 0; t < nmeas; ++t) {
     hmc.trajectory();
+    if (gupd.enabled) run_gauge_update<kDim, kN>(hmc, gupd, hmc.traj_count);
     plaq.add(avg_plaquette<kDim, kN>(hmc.U));
     Lphi.add(higgs_length<kDim>(hmc.phi));
     Llink.add(link_energy<kDim, kN>(hmc.phi, hmc.U, *rep));

@@ -9,6 +9,7 @@
 //                    or "auto" (all f_c=1, which reduces to (phi^dag phi)^2 -- a smoke test).
 // Run with no couplings to first print the channel C2 values and the required count.
 #include "hmc/gauge_higgs_hmc.hpp"
+#include "hmc/gauge_link_updater.hpp"
 #include "action/scalar_invariants.hpp"
 #include "measure/observables.hpp"
 #include "measure/autocorr.hpp"
@@ -80,15 +81,25 @@ int main(int argc, char** argv) {
   hmc.beta = beta; hmc.kappa = kappa; hmc.tau = tau; hmc.nmd = nmd; hmc.potential = &pot;
   const bool frozen = (std::getenv("GH_FROZEN") != nullptr);   // |phi_x|=1 frozen-length scalar
   hmc.frozen_phi = frozen;
+  // Tunneling-capable gauge-link updater (center flip + heatbath-veto + full-action metro),
+  // run between HMC trajectories. Default OFF (env GH_GUPD unset) -> behavior unchanged.
+  //   GH_GUPD="ncenter,nhb,nmetro[,width,hits]"  (e.g. GH_GUPD=4,0,2 ; GH_GUPD=2,1,1,0.5,20)
+  const GaugeUpdaterCfg gupd = GaugeUpdaterCfg::from_env(std::getenv("GH_GUPD"));
   std::printf("# D=%d SU(%d) L=%d^%d  beta=%.3f kappa=%.3f mu2=%.3f nmd=%d  potential=multi-invariant%s\n",
               kDim, kN, Lext, kDim, beta, kappa, mu2, nmd, frozen ? "  [FROZEN |phi|=1]" : "");
+  if (gupd.enabled)
+    std::printf("# GAUGE-LINK UPDATER ON: n_center=%d n_hb=%d n_metro=%d (width=%.2f hits=%d)\n",
+                gupd.n_center, gupd.n_hb, gupd.n_metro, gupd.metro_width, gupd.metro_hits);
 
   // Start config: hot (disordered) by default; GH_COLD -> cold (ordered: identity links +
   // aligned phi). Hot-vs-cold hysteresis at fixed (beta,kappa) is the first-order test.
   if (std::getenv("GH_COLD")) { hmc.U.cold(); hmc.phi.cold(1.0); }
   else { hmc.U.hot(hmc.rng, 0.8); hmc.phi.gaussian(hmc.rng, 12345, rep->real, 0.3); }
   if (frozen) hmc.normalize_phi();   // project onto |phi_x|=1 before thermalizing
-  for (int t = 0; t < ntherm; ++t) hmc.trajectory();
+  for (int t = 0; t < ntherm; ++t) {
+    hmc.trajectory();
+    if (gupd.enabled) run_gauge_update<kDim, kN>(hmc, gupd, hmc.traj_count);
+  }
 
   hmc.traj_count = 0; hmc.accept_count = 0;
   Stats plaq, Lphi, Llink; double sExp = 0.0;
@@ -97,6 +108,7 @@ int main(int argc, char** argv) {
   ll_series.reserve(nmeas); pl_series.reserve(nmeas);
   for (int t = 0; t < nmeas; ++t) {
     hmc.trajectory();
+    if (gupd.enabled) run_gauge_update<kDim, kN>(hmc, gupd, hmc.traj_count);
     const Real pv = avg_plaquette<kDim, kN>(hmc.U);
     const Real lv = higgs_length<kDim>(hmc.phi);
     const Real kv = link_energy<kDim, kN>(hmc.phi, hmc.U, *rep);
