@@ -12,7 +12,7 @@ CSV="$OUT/2t_grid.csv"
 echo "beta,kappa,start,plaq,acc,Llink" > "$CSV"
 BETAS="0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0"
 KAPPAS="0 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0"
-NTHERM=300; NMEAS=100; NMD=40; SEED=12345
+NTHERM="${NTHERM:-300}"; NMEAS="${NMEAS:-100}"; NMD="${NMD:-40}"; SEED="${SEED:-12345}"
 
 run_one() {
   b="$1"; k="$2"; st="$3"

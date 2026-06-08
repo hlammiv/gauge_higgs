@@ -205,6 +205,12 @@ int main(int argc, char** argv) {
   in.w11        = wl[1][1].mean();   // per-config grand mean (sanity vs avg_plaquette)
   in.acceptance = hmc.acceptance();
   in.plaq = &plaq; in.Lphi = &Lphi; in.Llink = &Llink; in.poly = &poly;
+  // Matter (Higgs) susceptibility chi_link = V * Var(L_link): peaks at the matter-ordering
+  // transition (a genuine transition grows the peak with V; a crossover does not). The peak
+  // LOCATION is normalization-independent -> answers the confined+condensed transition-vs-crossover.
+  { long nb = 1; for (int d = 0; d < kDim; ++d) nb *= Lext; nb *= kDim;   // n_bonds = vol*D
+    std::printf("chi_link = %.6f   (V*Var(L_link), V=n_bonds=%ld ; Var=%.4e)\n",
+                static_cast<double>(nb) * Llink.var(), nb, Llink.var()); }
   report_string_tension(/*label=*/"", jk, in);
   return 0;
 }
