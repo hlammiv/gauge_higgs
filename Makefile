@@ -28,6 +28,12 @@ TESTBINS   := $(patsubst test/%.cpp,$(BUILD)/%,$(TESTSRC))
 .PHONY: all test clean
 all: $(DRIVERBINS) $(TESTBINS)
 
+# Convenience phony for the 2D-LLR U(1)+Higgs density-of-states driver (additive; does NOT
+# alter any existing target -- src/u1_llr.cpp is already auto-discovered by DRIVERSRC and
+# built by the generic src/%.cpp rule. `make build/u1_llr` works without this line).
+.PHONY: u1_llr
+u1_llr: $(BUILD)/u1_llr
+
 # Config stamp: its name encodes NDIM/NCOL, so changing them forces a driver rebuild
 # (compile-time config can't be picked up by timestamps alone).
 CONFIG_STAMP := $(BUILD)/.config-$(NDIM)-$(NCOL)

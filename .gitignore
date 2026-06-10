@@ -30,3 +30,4 @@ literature/discrete_symmetry/
 __pycache__/
 pg_plaq_scan/
 scan_plots/
+.llr_ref/
