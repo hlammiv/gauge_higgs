@@ -584,6 +584,76 @@ int mode_rect(int argc, char** argv) {
   return 0;
 }
 
+// =====================================================================================
+// rectseed: SEEDING half of a parallel rectangular tile. Same two-pass meet-in-the-gap
+// raster as mode_rect, but instead of RM-solving each cell it DRIVES the config in and
+// DUMPS it + a CELL manifest line. Reuse mode_solve (parallel over cells) for the RM, so
+// the expensive K*NRM solve parallelizes -> K=100/NRM=200 becomes tractable.
+// Emits the LLR2DRECT header + "CELL: idx i j A0 E2_0 hw1 hw2 path" lines; configs -> cfgdir.
+// =====================================================================================
+int mode_rect_seed(int argc, char** argv) {
+  // usage: rectseed L q lambda Atop Abot step1 hw1 Bmin Bmax step2 hw2 a0 seed cfgdir [knobs...]
+  if (argc < 15) {
+    std::fprintf(stderr, "usage: u1_llr rectseed L q lambda Atop Abot step1 hw1 Bmin Bmax step2 hw2 a0 seed cfgdir "
+                         "[delta0 n_hit_g n_over tau_s n_md_s n_site site_w]\n");
+    return 1;
+  }
+  auto af = [&](int i, double d){ return i < argc ? std::atof(argv[i]) : d; };
+  auto ai = [&](int i, long d){ return i < argc ? std::atol(argv[i]) : d; };
+  LLRParams P;
+  P.L = (int)ai(1, 4); P.q = (int)ai(2, 1); P.lambda = af(3, 0.5);
+  P.Atop = af(4, 0); P.Abot = af(5, 0); P.step1 = af(6, 1); P.hw1 = af(7, 1);
+  const Real Bmin = af(8, 0), Bmax = af(9, 1); P.step2 = af(10, 1); P.hw2 = af(11, 1);
+  P.a0 = af(12, 1.0); P.seed = (std::uint64_t)ai(13, 1);
+  const char* cfgdir = argv[14];
+  P.delta0 = af(15, P.delta0); P.n_hit_g = (int)ai(16, P.n_hit_g); P.n_over = (int)ai(17, P.n_over);
+  P.tau_s = af(18, P.tau_s); P.n_md_s = (int)ai(19, P.n_md_s); P.n_site = (int)ai(20, P.n_site); P.site_w = af(21, P.site_w);
+  parse_init_ridges(P);
+
+  const int N1 = (int)((P.Atop - P.Abot) / P.step1 + 0.5) + 1;
+  const int N2 = (int)((Bmax - Bmin) / P.step2 + 0.5) + 1;
+  std::printf("LLR2DRECT(grp,D,Nt,Nx): U1q%d %d %d %d | A=[%g,%g] step1=%g hw1=%g | "
+              "B=[%g,%g] step2=%g hw2=%g | q=%d lambda=%g | %dx%d cells\n",
+              P.q, kDim, P.L, P.L, P.Atop, P.Abot, P.step1, P.hw1, Bmin, Bmax, P.step2, P.hw2,
+              P.q, P.lambda, N1, N2);
+  const std::int64_t vol = [&]{ std::int64_t v = 1; for (int mu = 0; mu < kDim; ++mu) v *= P.L; return v; }();
+  std::printf("NPLAQ: %lld\nNLINKS: %lld\n",
+              (long long)(vol * kDim * (kDim - 1) / 2), (long long)(vol * kDim));
+  std::fflush(stdout);
+
+  const unsigned CAP = 8000;
+  std::vector<std::vector<int>> done(N1, std::vector<int>(N2, 0));
+  int idxc = 0;
+  char path[1024];
+  auto raster = [&](bool cold) {
+    u1::U1LLR<kDim> E(make_ext(P.L), P.seed + (cold ? 0u : 777u));
+    apply_knobs(E, P);
+    if (cold) E.cold(); else E.hot();
+    Real a1 = P.a0, a2 = 0.0; bool have = false;
+    for (int ii = 0; ii < N1; ++ii) {
+      const int i = cold ? (N1 - 1 - ii) : ii;
+      const Real A0 = P.Atop - i * P.step1;
+      for (int jj = 0; jj < N2; ++jj) {
+        int jB = (ii % 2 == 0) ? jj : (N2 - 1 - jj);
+        const int j = cold ? (N2 - 1 - jB) : jB;
+        if (done[i][j]) continue;
+        const Real B0 = Bmin + j * P.step2, E2_0 = -B0;
+        const Real s1 = have ? a1 : a1_init(P, A0), s2 = have ? a2 : a2_init(P, A0);
+        if (!E.seed_cell(A0, E2_0, P.hw1, P.hw2, s1, s2, CAP)) continue;
+        a1 = s1; a2 = s2; have = true;                                // carry the drive config forward
+        std::snprintf(path, sizeof(path), "%s/cell_%d_%d.cfg", cfgdir, i, j);
+        if (!save_cfg(path, E)) continue;
+        done[i][j] = 1;
+        std::printf("CELL: %d %d %d %.2f %.2f %.4f %.4f %s\n", idxc++, i, j, A0, E2_0, P.hw1, P.hw2, path);
+        std::fflush(stdout);
+      }
+    }
+  };
+  raster(true); raster(false);
+  std::fprintf(stderr, "RECTSEED: %d cells dumped to %s\n", idxc, cfgdir);
+  return 0;
+}
+
 void usage(const char* prog) {
   std::fprintf(stderr,
     "usage:\n"
@@ -605,6 +675,7 @@ int main(int argc, char** argv) {
   if (argc > 1 && std::strcmp(argv[1], "fdcheck") == 0)   return mode_fdcheck(argc - 1, argv + 1);
   if (argc > 1 && std::strcmp(argv[1], "slab") == 0)      return mode_slab(argc - 1, argv + 1);
   if (argc > 1 && std::strcmp(argv[1], "rect") == 0)      return mode_rect(argc - 1, argv + 1);
+  if (argc > 1 && std::strcmp(argv[1], "rectseed") == 0)  return mode_rect_seed(argc - 1, argv + 1);
 
   // default: full ridge tiling
   if (argc < 16) { usage(argv[0]); return 1; }
