@@ -119,8 +119,12 @@ def connectivity(idx):
     return comps
 
 
-def integrate(cells, idx, sd=None):
-    """Weighted least-squares lnrho from the (a1,a2) gradient over (i,j)-adjacent edges."""
+def integrate(cells, idx, sd=None, e2_weight=1.0):
+    """Weighted least-squares lnrho from the (a1,a2) gradient over (i,j)-adjacent edges.
+    e2_weight<1 downweights the E2-direction (i,j+1) edges, which carry a2 (the matter
+    slope). a2 is noisier than a1 (gauge) when the matter is under-converged in the gap;
+    downweighting keeps the A-direction of lnrho governed by the clean a1 (so the gauge
+    transition lands at the right beta), at the cost of a softer B-direction."""
     n = len(cells); pos = {ij: k for k, ij in enumerate(idx)}
     rows = []; rhs = []; wts = []
     eps = 1e-6
@@ -136,6 +140,8 @@ def integrate(cells, idx, sd=None):
                     w = 1.0 / (sd[k, 0] ** 2 + sd[k, 1] ** 2 + sd[k2, 0] ** 2 + sd[k2, 1] ** 2 + eps)
                 else:
                     w = 1.0
+                if (ni, nj) == (i, j + 1):       # E2-direction edge (carries a2) -> downweight
+                    w *= e2_weight * e2_weight
                 wts.append(np.sqrt(w))
     # gauge fix: lnrho = 0 at the most-disordered reached cell (max E1)
     kref = int(np.argmax(cells[:, 0]))
