@@ -40,12 +40,19 @@ int mode_point(int argc, char** argv) {
   std::printf("# u1_frozen point: D=%d L=%d beta=%g kappa=%g q=%d  nsweep=%ld ntherm=%ld n_or=%d\n",
               kDim, L, beta, kappa, q, nsweep, ntherm, n_or);
   s.thermalize((int)ntherm);
-  double mA = 0, mB = 0, mP = 0, mL = 0; long n = 0;
+  double mA = 0, mB = 0, mP = 0, mL = 0, mA2 = 0, mB2 = 0; long n = 0;
   for (long i = 0; i < nsweep; ++i) {
     s.sweep();
-    mA += s.A(); mB += s.B(); mP += s.avg_plaq(); mL += s.link_energy(); ++n;
+    const double A = s.A(), B = s.B();
+    mA += A; mB += B; mA2 += A * A; mB2 += B * B; mP += s.avg_plaq(); mL += s.link_energy(); ++n;
   }
+  const double V = double(s.lat.vol);
+  // susceptibilities = Var/vol (intensive); chi_link (conjugate to kappa) PEAKS at the Higgs transition,
+  // chi_plaq (conjugate to beta) peaks at the gauge transition. The order parameter, NOT the hopping energy.
+  const double chiB = (mB2 / n - (mB / n) * (mB / n)) / V;
+  const double chiA = (mA2 / n - (mA / n) * (mA / n)) / V;
   std::printf("# <A>=%.4f  <B>=%.4f  <plaq>=%.5f  <cos>_link=%.5f\n", mA / n, mB / n, mP / n, mL / n);
+  std::printf("# chi_plaq=%.5f  chi_link=%.5f   (Var/vol; peak => transition)\n", chiA, chiB);
   std::printf("# gauge_acc=%.2f gor_acc=%.2f zq_flip=%.2f matter_acc=%.2f step=%.3f\n",
               s.gauge_acc(), s.gor_rate(), s.zq_flip(), s.matter_acc(), s.gauge_step);
   return 0;
