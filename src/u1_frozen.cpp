@@ -45,8 +45,57 @@ int mode_point(int argc, char** argv) {
     s.sweep();
     mA += s.A(); mB += s.B(); mP += s.avg_plaq(); mL += s.link_energy(); ++n;
   }
-  std::printf("# <A>=%.4f  <B>=%.4f  <plaq>=%.5f  <cos>_link=%.5f   gauge_acc=%.2f zq_acc=%.2f step=%.3f\n",
-              mA / n, mB / n, mP / n, mL / n, s.gauge_acc(), s.zq_acc(), s.gauge_step);
+  std::printf("# <A>=%.4f  <B>=%.4f  <plaq>=%.5f  <cos>_link=%.5f\n", mA / n, mB / n, mP / n, mL / n);
+  std::printf("# gauge_acc=%.2f gor_acc=%.2f zq_flip=%.2f matter_acc=%.2f step=%.3f\n",
+              s.gauge_acc(), s.gor_rate(), s.zq_flip(), s.matter_acc(), s.gauge_step);
+  return 0;
+}
+
+// Build the multicanonical weight g(B) by Wang-Landau so the frozen matter TUNNELS the deep-Higgs
+// first-order B-jump (which plain heatbath cannot cross). Bounded domain B in [Bmin,Bmax]; bias enters
+// the ACCEPT step of every B-changing kernel. Writes g(B) to <outbase>.g.
+int mode_muca(int argc, char** argv) {
+  auto af = [&](int i, double d){ return i < argc ? std::atof(argv[i]) : d; };
+  auto ai = [&](int i, long d){ return i < argc ? std::atol(argv[i]) : d; };
+  const int L = (int)ai(2, 4);
+  const double beta = af(3, 1.0), kappa = af(4, 0.3);
+  const int q = (int)ai(5, 2);
+  const double Bmin = af(6, 0.0), Bmax = af(7, 2048.0); const int nbin = (int)ai(8, 64);
+  const long maxsweep = ai(9, 400000), ntherm = ai(10, 2000);
+  const std::uint64_t seed = (std::uint64_t)ai(11, 7);
+  const int n_or = (int)ai(12, 3);
+  const char* outbase = argc > 13 ? argv[13] : "u1frozen_muca";
+
+  U1Frozen<kDim> s(ext(L), seed);
+  s.beta = beta; s.kappa = kappa; s.q = q; s.n_or = n_or; s.hot(0.8);
+  s.thermalize((int)ntherm);                       // unbiased thermalize (lands in ONE phase)
+
+  // Convention: biased weight exp(-S + g(B)); accept uses +Δg (muca_accept); reweight uses exp(-g).
+  // Wang-Landau converges g -> -ln rho_canonical by DECREMENTING g on each visit (this SUPPRESSES the
+  // already-occupied phase; an INCREMENT would be positive feedback and pin the system in one phase).
+  MucaB W(Bmin, Bmax, nbin);
+  s.mucab = &W; s.muca_build = false; s.matter_metro = true;   // record WL here (correct sign); broad proposals
+  const double lo = Bmin + 0.05 * (Bmax - Bmin), hi = Bmax - 0.05 * (Bmax - Bmin);
+  const double Bmid = 0.5 * (Bmin + Bmax);
+  std::printf("# u1_frozen muca: D=%d L=%d beta=%g kappa=%g q=%d  B=[%g,%g] nbin=%d\n",
+              kDim, L, beta, kappa, q, Bmin, Bmax, nbin);
+  long sweep = 0; int stage = 0; double bvlo = 1e18, bvhi = -1e18; bool tunneled = false;
+  while (sweep < maxsweep && W.f > 0.01) {
+    for (int k = 0; k < 2000 && sweep < maxsweep; ++k, ++sweep) {
+      s.sweep();
+      const double B = s.cur_B();
+      const int bi = W.bin(B); W.g[bi] -= W.f; W.H[bi] += 1;     // WL: suppress the visited B-bin
+      bvlo = std::min(bvlo, B); bvhi = std::max(bvhi, B);
+      if (B < Bmid - 0.1 * (Bmax - Bmin)) tunneled |= (bvhi > Bmid + 0.1 * (Bmax - Bmin));
+    }
+    const double flat = W.flatness(lo, hi);
+    std::printf("# sweep %ld stage %d f=%.4f flat=%.2f  B[%.0f,%.0f] tunneled=%d\n",
+                sweep, stage, W.f, flat, bvlo, bvhi, (int)tunneled);
+    if (flat > 0.8) { W.halve_f(); ++stage; }
+  }
+  char gpath[512]; std::snprintf(gpath, sizeof gpath, "%s.g", outbase); W.save(gpath);
+  std::printf("# DONE: f=%.4f B[%.0f,%.0f] (mid=%.0f) TUNNELED=%s -> wrote %s\n",
+              W.f, bvlo, bvhi, Bmid, tunneled ? "YES" : "NO", gpath);
   return 0;
 }
 
@@ -95,11 +144,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr,
       "usage:\n"
       "  %s point <L> <beta> <kappa> <q> [nsweep ntherm seed n_or]\n"
-      "  %s hyst  <L> <beta> <q> <kmin> <kmax> <nk> [nper ntherm0 seed n_or]\n", argv[0], argv[0]);
+      "  %s hyst  <L> <beta> <q> <kmin> <kmax> <nk> [nper ntherm0 seed n_or]\n"
+      "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n",
+      argv[0], argv[0], argv[0]);
     return 1;
   }
   if (!std::strcmp(argv[1], "point")) return mode_point(argc, argv);
   if (!std::strcmp(argv[1], "hyst"))  return mode_hyst(argc, argv);
-  std::fprintf(stderr, "unknown mode '%s' (use point|hyst)\n", argv[1]);
+  if (!std::strcmp(argv[1], "muca"))  return mode_muca(argc, argv);
+  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca)\n", argv[1]);
   return 1;
 }
