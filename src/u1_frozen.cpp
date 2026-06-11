@@ -99,6 +99,52 @@ int mode_muca(int argc, char** argv) {
   return 0;
 }
 
+// Build the multicanonical weight g(A) in the GAUGE ACTION A by Wang-Landau, so the gauge sector TUNNELS the
+// large-beta Z_q (de)confinement ordering barrier (a single-link Z_q flip cannot cross it). Same machinery as
+// mode_muca but on A; the matter stays unbiased (von Mises heatbath). Writes g(A) to <outbase>.gA.
+int mode_mucaA(int argc, char** argv) {
+  auto af = [&](int i, double d){ return i < argc ? std::atof(argv[i]) : d; };
+  auto ai = [&](int i, long d){ return i < argc ? std::atol(argv[i]) : d; };
+  const int L = (int)ai(2, 4);
+  const double beta = af(3, 1.0), kappa = af(4, 0.3);
+  const int q = (int)ai(5, 2);
+  const double Amin = af(6, 0.0), Amax = af(7, 3072.0); const int nbin = (int)ai(8, 64);
+  const long maxsweep = ai(9, 400000), ntherm = ai(10, 2000);
+  const std::uint64_t seed = (std::uint64_t)ai(11, 7);
+  const int n_or = (int)ai(12, 3);
+  const char* outbase = argc > 13 ? argv[13] : "u1frozen_mucaA";
+
+  U1Frozen<kDim> s(ext(L), seed);
+  s.beta = beta; s.kappa = kappa; s.q = q; s.n_or = n_or; s.hot(0.8);
+  s.thermalize((int)ntherm);                       // unbiased thermalize (fixes the gauge step; lands in ONE phase)
+
+  // Convention: biased weight exp(-S + g(A)); accept uses +Δg; reweight uses exp(-g). WL DECREMENTS g on visit.
+  MucaB WA(Amin, Amax, nbin);
+  s.mucaA = &WA;
+  const double lo = Amin + 0.05 * (Amax - Amin), hi = Amax - 0.05 * (Amax - Amin);
+  const double Amid = 0.5 * (Amin + Amax);
+  std::printf("# u1_frozen mucaA: D=%d L=%d beta=%g kappa=%g q=%d  A=[%g,%g] nbin=%d  (tunnels the large-beta Z_q barrier)\n",
+              kDim, L, beta, kappa, q, Amin, Amax, nbin);
+  long sweep = 0; int stage = 0; double avlo = 1e18, avhi = -1e18; bool tunneled = false;
+  while (sweep < maxsweep && WA.f > 0.01) {
+    for (int k = 0; k < 2000 && sweep < maxsweep; ++k, ++sweep) {
+      s.sweep();
+      const double A = s.cur_A();
+      const int bi = WA.bin(A); WA.g[bi] -= WA.f; WA.H[bi] += 1;
+      avlo = std::min(avlo, A); avhi = std::max(avhi, A);
+      if (A < Amid - 0.1 * (Amax - Amin)) tunneled |= (avhi > Amid + 0.1 * (Amax - Amin));
+    }
+    const double flat = WA.flatness(lo, hi);
+    std::printf("# sweep %ld stage %d f=%.4f flat=%.2f  A[%.0f,%.0f] tunneled=%d\n",
+                sweep, stage, WA.f, flat, avlo, avhi, (int)tunneled);
+    if (flat > 0.8) { WA.halve_f(); ++stage; }
+  }
+  char gpath[512]; std::snprintf(gpath, sizeof gpath, "%s.gA", outbase); WA.save(gpath);
+  std::printf("# DONE: f=%.4f A[%.0f,%.0f] (mid=%.0f) TUNNELED=%s -> wrote %s\n",
+              WA.f, avlo, avhi, Amid, tunneled ? "YES" : "NO", gpath);
+  return 0;
+}
+
 // Measure <B>/link over nper sweeps WITHOUT re-thermalizing (carry the config forward).
 double branch_point(U1Frozen<kDim>& s, double kappa, long nper) {
   s.kappa = kappa;
@@ -145,13 +191,15 @@ int main(int argc, char** argv) {
       "usage:\n"
       "  %s point <L> <beta> <kappa> <q> [nsweep ntherm seed n_or]\n"
       "  %s hyst  <L> <beta> <q> <kmin> <kmax> <nk> [nper ntherm0 seed n_or]\n"
-      "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n",
-      argv[0], argv[0], argv[0]);
+      "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
+      "  %s mucaA <L> <beta> <kappa> <q> <Amin> <Amax> <nbin> [maxsweep ntherm seed n_or outbase]\n",
+      argv[0], argv[0], argv[0], argv[0]);
     return 1;
   }
   if (!std::strcmp(argv[1], "point")) return mode_point(argc, argv);
   if (!std::strcmp(argv[1], "hyst"))  return mode_hyst(argc, argv);
   if (!std::strcmp(argv[1], "muca"))  return mode_muca(argc, argv);
-  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca)\n", argv[1]);
+  if (!std::strcmp(argv[1], "mucaA")) return mode_mucaA(argc, argv);
+  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA)\n", argv[1]);
   return 1;
 }

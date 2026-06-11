@@ -84,10 +84,13 @@ struct U1Frozen {
   std::uint64_t z_prop = 0, z_flip = 0;      // Z_q heatbath: total / sectors with m!=0 chosen
   std::uint64_t m_prop = 0, m_acc = 0;       // matter heatbath/overrelax muca acceptance
 
-  // ---- multicanonical bias in B (optional; nullptr -> unbiased) ----
-  MucaB* mucab = nullptr;
+  // ---- multicanonical bias in B (matter) and/or A (gauge) (optional; nullptr -> unbiased) ----
+  MucaB* mucab = nullptr;   // bias g(B): tunnels the deep-Higgs first-order matter B-jump.
+  MucaB* mucaA = nullptr;   // bias g(A): tunnels the large-beta Z_q (de)confinement ordering barrier in the
+                            //   gauge action (the "large-beta Z_q issue" -- a single-link Z_q flip can't cross it).
   bool   muca_build = false;
   Real   B_run = 0.0;       // running global B (resynced each sweep when mucab is set)
+  Real   A_run = 0.0;       // running global A (gauge action; resynced each sweep when mucaA is set)
 
   U1Frozen(const std::array<int, D>& ext, std::uint64_t seed)
       : lat(ext), th(static_cast<std::size_t>(lat.vol) * D, 0.0), chi(lat.vol, 0.0), rng(seed) {}
@@ -115,6 +118,7 @@ struct U1Frozen {
   }
   Real link_energy() const { return B() / (2.0 * static_cast<Real>(lat.vol) * D); }  // <cos> per link
   Real cur_B() const { return mucab ? B_run : B(); }
+  Real cur_A() const { return mucaA ? A_run : A(); }
 
   // Site matter resultant: S(chi_x) = -2 kappa Re[e^{-i chi_x} R_x] = -2 kappa |R_x| cos(chi_x - arg R_x).
   Complex matter_resultant(std::int64_t x) const {
@@ -156,12 +160,17 @@ struct U1Frozen {
   }
   static Real plaq_cos_at(Complex G, Real theta) { return (std::polar(1.0, theta) * G).real(); }
 
-  // Apply a muca-biased Metropolis accept for a B-changing move with unbiased action change dS and
-  // hopping change dB. Returns true (accepted, B_run advanced) / false (rejected).
-  bool muca_accept(Real dS, Real dB, std::uint64_t k) {
+  // Muca-biased Metropolis accept for a move with unbiased action change dS, hopping change dB, gauge-action
+  // change dA. Adds g(B+dB)-g(B) and g(A+dA)-g(A) to the log-accept. True -> accepted (B_run/A_run advanced).
+  bool muca_accept(Real dS, Real dB, Real dA, std::uint64_t k) {
     Real ax = -dS;
     if (mucab) ax += Real(mucab->gval(double(B_run + dB)) - mucab->gval(double(B_run)));
-    if (ax >= 0.0 || rng.uniform(k) < std::exp(ax)) { if (mucab) B_run += dB; return true; }
+    if (mucaA) ax += Real(mucaA->gval(double(A_run + dA)) - mucaA->gval(double(A_run)));
+    if (ax >= 0.0 || rng.uniform(k) < std::exp(ax)) {
+      if (mucab) B_run += dB;
+      if (mucaA) A_run += dA;
+      return true;
+    }
     return false;
   }
 
@@ -169,6 +178,7 @@ struct U1Frozen {
   void sweep() {
     const std::uint64_t t = sweep_count;
     if (mucab) B_run = B();   // resync the running B once per sweep
+    if (mucaA) A_run = A();   // resync the running A (gauge action) once per sweep
 
     // 1. gauge link Metropolis. L(theta) = -beta Re[e^{i theta} G] - 2 kappa cos(q theta + psi).
     for (std::int64_t x = 0; x < lat.vol; ++x)
@@ -180,12 +190,13 @@ struct U1Frozen {
         const Real u = rng.uniform(Rng::key(0xA1, t, x, mu, 0));
         const Real th_new = th_old + gauge_step * (2.0 * u - 1.0);
         const Real m_old = std::cos(q * th_old + psi), m_new = std::cos(q * th_new + psi);
-        const Real dS = -beta * (plaq_cos_at(G, th_new) - plaq_cos_at(G, th_old))
-                        - 2.0 * kappa * (m_new - m_old);
+        const Real dcos = plaq_cos_at(G, th_new) - plaq_cos_at(G, th_old);
+        const Real dS = -beta * dcos - 2.0 * kappa * (m_new - m_old);
         const Real dB = 2.0 * (m_new - m_old);             // this link's B-contribution change
+        const Real dA = -dcos;                             // A = const - sum cos  =>  dA = -d(cos)
         ++g_prop;
         th[idx] = th_new;
-        if (muca_accept(dS, dB, Rng::key(0xA2, t, x, mu, 0))) ++g_acc; else th[idx] = th_old;
+        if (muca_accept(dS, dB, dA, Rng::key(0xA2, t, x, mu, 0))) ++g_acc; else th[idx] = th_old;
       }
 
     // 2. gauge overrelaxation: reflect theta -> -2 arg G - theta (plaquette preserved), accept on matter.
@@ -198,11 +209,11 @@ struct U1Frozen {
           const Real th_old = th[idx];
           const Real th_new = -2.0 * std::arg(G) - th_old;
           const Real m_old = std::cos(q * th_old + psi), m_new = std::cos(q * th_new + psi);
-          const Real dS = -2.0 * kappa * (m_new - m_old);  // plaquette part is preserved by construction
+          const Real dS = -2.0 * kappa * (m_new - m_old);  // plaquette (and A) preserved by construction -> dA=0
           const Real dB = 2.0 * (m_new - m_old);
           ++gor_prop;
           th[idx] = th_new;
-          if (muca_accept(dS, dB, Rng::key(0xA3, t, it, x * D + mu))) ++gor_acc; else th[idx] = th_old;
+          if (muca_accept(dS, dB, 0.0, Rng::key(0xA3, t, it, x * D + mu))) ++gor_acc; else th[idx] = th_old;
         }
 
     // 3. Z_q-sector heatbath: resample the center coset theta -> theta + 2 pi m/q from exp(beta Re[e^{i.}G]).
@@ -213,12 +224,20 @@ struct U1Frozen {
           const std::size_t idx = x * D + mu;
           const Complex G = gauge_staple(x, mu);
           const Real th0 = th[idx];
-          Real lw[256]; Real wmax = -1e300;
-          for (int m = 0; m < q; ++m) { lw[m] = beta * plaq_cos_at(G, th0 + 2.0 * kPi * m / q); wmax = std::max(wmax, lw[m]); }
+          const Real c_cur = plaq_cos_at(G, th0);
+          Real lw[256], cm[256]; Real wmax = -1e300;
+          for (int m = 0; m < q; ++m) {
+            cm[m] = plaq_cos_at(G, th0 + 2.0 * kPi * m / q);
+            lw[m] = beta * cm[m];
+            if (mucaA) lw[m] += Real(mucaA->gval(double(A_run - (cm[m] - c_cur))));  // A_total(m) = A_run - (cm-c_cur)
+            wmax = std::max(wmax, lw[m]);
+          }
           Real sum = 0.0; for (int m = 0; m < q; ++m) { lw[m] = std::exp(lw[m] - wmax); sum += lw[m]; }
           Real r = rng.uniform(Rng::key(0xB0, t, x, mu, 0)) * sum; int sel = 0;
           for (int m = 0; m < q; ++m) { r -= lw[m]; if (r <= 0.0) { sel = m; break; } }
-          ++z_prop; if (sel != 0) { th[idx] = th0 + 2.0 * kPi * sel / q; ++z_flip; }
+          ++z_prop;
+          if (sel != 0) { th[idx] = th0 + 2.0 * kPi * sel / q; ++z_flip; }
+          if (mucaA) A_run += -(cm[sel] - c_cur);          // advance running A by the selected sector's dA
         }
 
     // 4. matter update.
@@ -232,8 +251,8 @@ struct U1Frozen {
       if (mucab && matter_metro) {
         const Real chi_new = (rng.uniform(Rng::key(0xC0, t, x)) - 0.5) * 2.0 * kPi;
         const Real dB = site_B_contrib(chi_new, R) - site_B_contrib(chi[x], R);
-        ++m_prop;                                                  // dS_local = -kappa*dB
-        if (muca_accept(-kappa * dB, dB, Rng::key(0xC1, t, x))) { chi[x] = chi_new; ++m_acc; }
+        ++m_prop;                                                  // dS_local = -kappa*dB, dA=0
+        if (muca_accept(-kappa * dB, dB, 0.0, Rng::key(0xC1, t, x))) { chi[x] = chi_new; ++m_acc; }
       } else {
         Real a = 2.0 * kappa * std::abs(R), alpha = std::arg(R);
         if (a < 0.0) { a = -a; alpha += kPi; }                     // kappa<0 safety
@@ -241,7 +260,7 @@ struct U1Frozen {
         if (mucab) {
           const Real dB = site_B_contrib(chi_new, R) - site_B_contrib(chi[x], R);
           ++m_prop;
-          if (muca_accept(0.0, dB, Rng::key(0xC1, t, x))) { chi[x] = chi_new; ++m_acc; }
+          if (muca_accept(0.0, dB, 0.0, Rng::key(0xC1, t, x))) { chi[x] = chi_new; ++m_acc; }
         } else {
           chi[x] = chi_new;
         }
@@ -256,7 +275,7 @@ struct U1Frozen {
         if (mucab) {
           const Real dB = site_B_contrib(chi_new, R) - site_B_contrib(chi[x], R);
           ++m_prop;
-          if (muca_accept(0.0, dB, Rng::key(0xC2, t, it, x))) { chi[x] = chi_new; ++m_acc; }
+          if (muca_accept(0.0, dB, 0.0, Rng::key(0xC2, t, it, x))) { chi[x] = chi_new; ++m_acc; }
         } else {
           chi[x] = chi_new;
         }

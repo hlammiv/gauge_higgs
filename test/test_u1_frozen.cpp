@@ -134,6 +134,26 @@ static void test_muca_linear(int q, bool metro) {
   CHECK_CLOSE(ls, lr, 0.02, msg);
 }
 
+// ---- 8. muca g(A)=c*A in the accept reproduces an unbiased run at beta-c (A-bias enters gauge Metropolis
+//        AND the Z_q-sector heatbath) -- the large-beta Z_q ordering-barrier tool. ----
+template <int D>
+static void test_mucaA_linear(int q) {
+  const Real beta = 1.0, kappa = 0.30, c = 0.30;   // g(A)=c*A shifts beta -> beta-c
+  U1Frozen<D> ref(cube<D>(4), 505); ref.beta = beta - c; ref.kappa = kappa; ref.q = q; ref.hot(0.8);
+  ref.thermalize(400);
+  double pr = 0; int nr = 0; for (int i = 0; i < 1500; ++i) { ref.sweep(); pr += ref.avg_plaq(); ++nr; } pr /= nr;
+
+  U1Frozen<D> s(cube<D>(4), 606); s.beta = beta; s.kappa = kappa; s.q = q; s.hot(0.8);
+  MucaB WA(-200.0, 3200.0, 300);
+  for (int i = 0; i < WA.nbin; ++i) WA.g[i] = c * (WA.Bmin + (i + 0.5) * WA.dB);   // g(A) = c*A exactly
+  s.mucaA = &WA;
+  s.thermalize(400);
+  double ps = 0; int ns = 0; for (int i = 0; i < 1500; ++i) { s.sweep(); ps += s.avg_plaq(); ++ns; } ps /= ns;
+
+  char msg[120]; std::snprintf(msg, sizeof msg, "mucaA g=cA <plaq> %.4f vs unbiased beta-c %.4f (q=%d)", ps, pr, q);
+  CHECK_CLOSE(ps, pr, 0.015, msg);
+}
+
 int main() {
   std::printf("-- von Mises heatbath --\n"); test_vonmises();
   std::printf("-- Z_q link-jump dB=0 --\n"); test_zq_hop_dB0<4>(2); test_zq_hop_dB0<4>(4); test_zq_hop_dB0<3>(6);
@@ -141,6 +161,7 @@ int main() {
   std::printf("-- gauge local dS consistency --\n"); test_gauge_local<4>(2); test_gauge_local<3>(3);
   std::printf("-- gauge staple + overrelaxation --\n"); test_gauge_staple<4>(2); test_gauge_staple<3>(3);
   std::printf("-- kappa=0 vs HMC --\n"); test_kappa0_vs_hmc<4>();
-  std::printf("-- multicanonical-in-accept (linear g) --\n"); test_muca_linear<4>(2, false); test_muca_linear<3>(3, false); test_muca_linear<4>(2, true);
+  std::printf("-- multicanonical-in-B (linear g) --\n"); test_muca_linear<4>(2, false); test_muca_linear<3>(3, false); test_muca_linear<4>(2, true);
+  std::printf("-- multicanonical-in-A (linear g; large-beta Z_q tool) --\n"); test_mucaA_linear<4>(2); test_mucaA_linear<3>(3);
   return report("test_u1_frozen");
 }
