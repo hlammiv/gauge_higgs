@@ -17,6 +17,7 @@
 #include "u1/gauge_obs.hpp"   // wilson_grids, polyakov_abs (|P_n|), creutz_chi (sigma_1/sigma_q) -- DEFINITIVE discriminants
 #define GH_U1_HAVE_REDUCED_PLAQ_ANGLE   // monopole.hpp already provided it -> photon_mass.hpp must not redefine
 #include "u1/photon_structure.hpp"      // m_gamma via the static magnetic structure factor (needs L_s>=16)
+#include "u1/zq_gauge.hpp"              // pure Z_q gauge theory = the kappa->inf MATCHING target (digitization proof)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -247,6 +248,44 @@ int mode_pm(int argc, char** argv) {
   return 0;
 }
 
+// Pure Z_q gauge theory point run -- the kappa->inf matching target. Emits the SAME gauge discriminants as
+// mode_point so the deep-Higgs U(1)+charge-q runs can be compared directly (digitization: U(1)+q(beta,kappa->inf)
+// -> pure Z_q(beta)).
+int mode_zq(int argc, char** argv) {
+  auto af = [&](int i, double d){ return i < argc ? std::atof(argv[i]) : d; };
+  auto ai = [&](int i, long d){ return i < argc ? std::atol(argv[i]) : d; };
+  const int L = (int)ai(2, 8);
+  const double beta = af(3, 1.0);
+  const int q = (int)ai(4, 2);
+  const long nsweep = ai(5, 4000), ntherm = ai(6, 1500);
+  const std::uint64_t seed = (std::uint64_t)ai(7, 7);
+
+  ZqGauge<kDim> s(ext(L), seed); s.beta = beta; s.q = q; s.hot();
+  s.thermalize((int)ntherm);
+  double mP = 0, mA = 0, mRho = 0, mP1 = 0, mPq = 0; long n = 0, ng = 0;
+  WGrid w1(3, std::vector<double>(3, 0.0)), wq(3, std::vector<double>(3, 0.0));
+  WGrid acc1(3, std::vector<double>(3, 0.0)), accq(3, std::vector<double>(3, 0.0));
+  for (long i = 0; i < nsweep; ++i) {
+    s.sweep();
+    mP += s.avg_plaq(); mA += s.A(); ++n;
+    if (i % 4 == 0) {
+      mRho += monopole_density<kDim>(s.th, s.lat);
+      mP1  += polyakov_abs<kDim>(s.th, s.lat, 1);
+      mPq  += polyakov_abs<kDim>(s.th, s.lat, q);
+      wilson_grids<kDim>(s.th, s.lat, q, 2, w1, wq);
+      for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] += w1[R][T]; accq[R][T] += wq[R][T]; }
+      ++ng;
+    }
+  }
+  for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] /= ng; accq[R][T] /= ng; }
+  const double sig1 = creutz_chi(acc1, 2), sigq = creutz_chi(accq, 2);
+  std::printf("# u1_frozen zq (pure Z_q gauge): D=%d L=%d beta=%g q=%d  nsweep=%ld\n", kDim, L, beta, q, nsweep);
+  std::printf("# <A>=%.4f  <plaq>=%.5f\n", mA / n, mP / n);
+  std::printf("# rho_M=%.5f  |P1|=%.5f  |Pq|=%.5f  sigma1=%.5f  sigmaq=%.5f   (sigma=chi(2,2); area>0=confine)\n",
+              mRho / ng, mP1 / ng, mPq / ng, sig1, sigq);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -258,8 +297,9 @@ int main(int argc, char** argv) {
       "  %s hyst  <L> <beta> <q> <kmin> <kmax> <nk> [nper ntherm0 seed n_or]\n"
       "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
       "  %s mucaA <L> <beta> <kappa> <q> <Amin> <Amax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
-      "  %s pm    <Ls> <Lt> <beta> <kappa> <q> [nsweep ntherm meas_every seed n_or]   (m_gamma; Ls>=16)\n",
-      argv[0], argv[0], argv[0], argv[0], argv[0]);
+      "  %s pm    <Ls> <Lt> <beta> <kappa> <q> [nsweep ntherm meas_every seed n_or]   (m_gamma; Ls>=16)\n"
+      "  %s zq    <L> <beta> <q> [nsweep ntherm seed]   (pure Z_q gauge; kappa->inf matching target)\n",
+      argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 1;
   }
   if (!std::strcmp(argv[1], "point")) return mode_point(argc, argv);
@@ -267,6 +307,7 @@ int main(int argc, char** argv) {
   if (!std::strcmp(argv[1], "muca"))  return mode_muca(argc, argv);
   if (!std::strcmp(argv[1], "mucaA")) return mode_mucaA(argc, argv);
   if (!std::strcmp(argv[1], "pm"))    return mode_pm(argc, argv);
-  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA|pm)\n", argv[1]);
+  if (!std::strcmp(argv[1], "zq"))    return mode_zq(argc, argv);
+  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA|pm|zq)\n", argv[1]);
   return 1;
 }
