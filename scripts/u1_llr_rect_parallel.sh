@@ -23,9 +23,11 @@ mkdir -p "$OUT/cfg"
 echo "[rectseed] two-pass meet-in-the-gap drive-in -> $OUT/cfg"
 "$LLR" rectseed "$L" "$Q" "$LAM" "$Atop" "$Abot" "$step1" "$hw1" "$Bmin" "$Bmax" "$step2" "$hw2" \
     "$a0" "$seed" "$OUT/cfg" > "$OUT/seed.log" 2> "$OUT/seed.err"
-grep '^CELL:' "$OUT/seed.log" > "$OUT/manifest.txt"
+# SHUFFLE + renumber idx so the (slow) first-order GAP cells -- contiguous in raster order --
+# spread across solve workers instead of clustering in a few chunks (halves the tail).
+grep '^CELL:' "$OUT/seed.log" | shuf | awk '{$2=NR-1; print}' > "$OUT/manifest.txt"
 N=$(wc -l < "$OUT/manifest.txt")
-echo "[rectseed] $N cells dumped"
+echo "[rectseed] $N cells dumped (manifest shuffled for load balance)"
 
 echo "[solve] $NC workers (K=$K NRM=$NRM), env ridges: BRIDGE=[${U1_LLR_BRIDGE:-unset}] KRIDGE=[${U1_LLR_KRIDGE:-unset}]"
 per=$(( (N + NC - 1) / NC ))
