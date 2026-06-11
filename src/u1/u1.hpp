@@ -10,6 +10,7 @@
 #include "core/geometry.hpp"
 #include "core/rng.hpp"
 #include "core/config.hpp"
+#include "u1/u1_mucab.hpp"     // multicanonical bias in the matter hopping B (optional, ptr-gated)
 #include <vector>
 #include <cmath>
 #include <complex>
@@ -180,6 +181,25 @@ struct U1HMC {
   std::uint64_t traj_count = 0, accept_count = 0;
   Real last_dH = 0.0;
 
+  // ---- multicanonical bias in the matter hopping B (optional; nullptr -> unbiased, default) ----
+  MucaB* mucab = nullptr;     // when set, matter force uses kappa_eff=kappa+g'(B); accept adds -dg(B)
+  bool   muca_build = false;  // if true, Wang-Landau-record the accepted B each trajectory
+  // B = sum_{x,mu} 2 Re[conj(phi_x) e^{i q theta} phi_{x+mu}] (same as scan_obs::hop_energy_sum).
+  // SERIAL on purpose: called per-kick (~40-80x/trajectory) on a small lattice, so the OpenMP
+  // parallel-region spawn overhead would dominate; a plain loop is far faster here.
+  Real matter_B() const {
+    Real s = 0;
+    for (std::int64_t x = 0; x < lat.vol; ++x)
+      for (int mu = 0; mu < D; ++mu) {
+        const std::int64_t y = lat.neighbor_fwd(x, mu);
+        const Complex ph = std::polar(Real(1), q * th[x * D + mu]);
+        s += 2.0 * (std::conj(phi[x]) * ph * phi[y]).real();
+      }
+    return s;
+  }
+  // kappa_eff felt by the matter force: kappa + g'(B) when biased (B from the current config).
+  Real keff() const { return mucab ? kappa + Real(mucab->gprime(double(matter_B()))) : kappa; }
+
   U1HMC(const std::array<int, D>& ext, std::uint64_t seed)
       : lat(ext), th(static_cast<std::size_t>(lat.vol) * D, 0.0), p(th.size(), 0.0), Flink(th.size(), 0.0),
         phi(lat.vol, Complex(0, 0)), pi(lat.vol), Fphi(lat.vol), rng(seed) {}
@@ -203,12 +223,13 @@ struct U1HMC {
   // the (slow) gauge force once, so it is tallied in kick_count_gauge for an
   // apples-to-apples gauge-force-evaluation count against the nested scheme.
   void kick(Real eps) {
+    const Real ke = keff();                       // kappa (+ g'(B) if multicanonical)
     std::fill(Flink.begin(), Flink.end(), 0.0);
     add_gauge_force<D>(th, lat, beta, Flink);
-    add_matter_force<D>(phi, th, lat, q, kappa, Flink);
+    add_matter_force<D>(phi, th, lat, q, ke, Flink);
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < p.size(); ++i) p[i] -= eps * Flink[i];
-    scalar_force<D>(phi, th, lat, q, kappa, lambda, Fphi);
+    scalar_force<D>(phi, th, lat, q, ke, lambda, Fphi);
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < pi.size(); ++i) pi[i] += eps * Fphi[i];
     ++kick_count_gauge;
@@ -234,11 +255,12 @@ struct U1HMC {
 
   // FAST kick: full scalar sector. matter back-reaction -> p, scalar EOM -> pi.
   void kick_fast(Real eps) {
+    const Real ke = keff();                       // kappa (+ g'(B) if multicanonical)
     std::fill(Flink.begin(), Flink.end(), 0.0);
-    add_matter_force<D>(phi, th, lat, q, kappa, Flink);
+    add_matter_force<D>(phi, th, lat, q, ke, Flink);
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < p.size(); ++i) p[i] -= eps * Flink[i];
-    scalar_force<D>(phi, th, lat, q, kappa, lambda, Fphi);
+    scalar_force<D>(phi, th, lat, q, ke, lambda, Fphi);
     #pragma omp parallel for schedule(static)
     for (std::size_t i = 0; i < pi.size(); ++i) pi[i] += eps * Fphi[i];
   }
@@ -329,12 +351,17 @@ struct U1HMC {
     refresh_momenta();
     std::vector<Real> th0 = th; std::vector<Complex> phi0 = phi;
     const Real Hi = hamiltonian();
+    const double Bi = mucab ? double(matter_B()) : 0.0;
     if (n_scalar > 1) md_evolve_mts(); else md_evolve();
     const Real Hf = hamiltonian();
-    last_dH = Hf - Hi; ++traj_count;
+    const double Bf = mucab ? double(matter_B()) : 0.0;
+    last_dH = Hf - Hi;
+    if (mucab) last_dH -= Real(mucab->gval(Bf) - mucab->gval(Bi));   // biased accept: dH - dg(B)
+    ++traj_count;
     const double r = rng.uniform(Rng::key(0x53, traj_count));
     bool acc = (last_dH <= 0.0) || (r < std::exp(-last_dH));
     if (acc) ++accept_count; else { th = th0; phi = phi0; }
+    if (mucab && muca_build) mucab->wl_record(acc ? Bf : Bi);        // WL-record the post-state B
     return acc;
   }
   double acceptance() const { return traj_count ? double(accept_count) / double(traj_count) : 0.0; }
