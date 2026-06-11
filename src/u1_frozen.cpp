@@ -13,8 +13,10 @@
 //             prints <B>/link for both branches; a hysteresis gap = first-order line (the
 //             Bowler/Damgaard-Heller thermal-cycling locator).
 #include "u1/u1_frozen.hpp"
-#include "u1/monopole.hpp"    // monopole_density<D> (rho_M); include BEFORE anything redefining reduced_plaq_angle
+#include "u1/monopole.hpp"    // monopole_density<D> (rho_M); defines reduced_plaq_angle<D>
 #include "u1/gauge_obs.hpp"   // wilson_grids, polyakov_abs (|P_n|), creutz_chi (sigma_1/sigma_q) -- DEFINITIVE discriminants
+#define GH_U1_HAVE_REDUCED_PLAQ_ANGLE   // monopole.hpp already provided it -> photon_mass.hpp must not redefine
+#include "u1/photon_structure.hpp"      // m_gamma via the static magnetic structure factor (needs L_s>=16)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -208,6 +210,43 @@ int mode_hyst(int argc, char** argv) {
     std::printf("%.4f  %.5f  %.5f  %+.5f\n", kmin + i * dk, up[i], dn[i], dn[i] - up[i]);
   return 0;
 }
+// Photon mass m_gamma from the static magnetic structure factor on an ANISOTROPIC Ls^3 x Lt lattice
+// (geometric anisotropy: large spatial L_s, modest L_t, same beta). m_gamma=0 ONLY in the Coulomb phase, so
+// this is the observable that resolves the q>=5 intermediate-Coulomb WEDGE the gauge string tension cannot see.
+int mode_pm(int argc, char** argv) {
+  auto af = [&](int i, double d){ return i < argc ? std::atof(argv[i]) : d; };
+  auto ai = [&](int i, long d){ return i < argc ? std::atol(argv[i]) : d; };
+  const int Ls = (int)ai(2, 16), Lt = (int)ai(3, 8);
+  const double beta = af(4, 1.0), kappa = af(5, 0.0);
+  const int q = (int)ai(6, 2);
+  const long nsweep = ai(7, 1500), ntherm = ai(8, 800);
+  const int meas_every = (int)ai(9, 5);
+  const std::uint64_t seed = (std::uint64_t)ai(10, 7);
+  const int n_or = (int)ai(11, 3);
+
+  std::array<int, kDim> e{}; e[0] = Lt; for (int m = 1; m < kDim; ++m) e[m] = Ls;   // dir 0=time(Lt), 1..=space(Ls)
+  U1Frozen<kDim> s(e, seed);
+  s.beta = beta; s.kappa = kappa; s.q = q; s.n_or = n_or; s.hot(0.8);
+  s.thermalize((int)ntherm);
+  const u1::PhotonMomenta<kDim> mom = u1::photon_momenta<kDim>(s.lat);
+  const int ng = mom.n_groups();
+  std::vector<std::vector<Real>> perConfig;
+  for (long i = 0; i < nsweep; ++i) {
+    s.sweep();
+    if (i % meas_every == 0) perConfig.push_back(u1::photon_structure_factor<kDim>(s.th, s.lat, mom));
+  }
+  const int nfit = ng >= 4 ? 4 : ng;
+  const u1::PhotonMassFit fit = u1::photon_mass_fit<kDim>(perConfig, mom, nfit);
+  std::printf("# u1_frozen pm: Ls=%d Lt=%d beta=%g kappa=%g q=%d  nmeas=%zu ngroups=%d nfit=%d\n",
+              Ls, Lt, beta, kappa, q, perConfig.size(), ng, nfit);
+  std::printf("# m_gamma=%.5f  m2=%.6f +- %.6f  phat2_min=%.4f   (m_gamma~0 => COULOMB)\n",
+              fit.m_gamma, fit.m2, fit.m2_err, ng ? mom.phat2[0] : 0.0);
+  for (int g = 0; g < ng; ++g)
+    std::printf("# phat2=%.4f  R=%.5f +- %.5f\n", mom.phat2[g],
+                g < (int)fit.R.size() ? fit.R[g] : 0.0, g < (int)fit.R_err.size() ? fit.R_err[g] : 0.0);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -218,14 +257,16 @@ int main(int argc, char** argv) {
       "  %s point <L> <beta> <kappa> <q> [nsweep ntherm seed n_or]\n"
       "  %s hyst  <L> <beta> <q> <kmin> <kmax> <nk> [nper ntherm0 seed n_or]\n"
       "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
-      "  %s mucaA <L> <beta> <kappa> <q> <Amin> <Amax> <nbin> [maxsweep ntherm seed n_or outbase]\n",
-      argv[0], argv[0], argv[0], argv[0]);
+      "  %s mucaA <L> <beta> <kappa> <q> <Amin> <Amax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
+      "  %s pm    <Ls> <Lt> <beta> <kappa> <q> [nsweep ntherm meas_every seed n_or]   (m_gamma; Ls>=16)\n",
+      argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 1;
   }
   if (!std::strcmp(argv[1], "point")) return mode_point(argc, argv);
   if (!std::strcmp(argv[1], "hyst"))  return mode_hyst(argc, argv);
   if (!std::strcmp(argv[1], "muca"))  return mode_muca(argc, argv);
   if (!std::strcmp(argv[1], "mucaA")) return mode_mucaA(argc, argv);
-  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA)\n", argv[1]);
+  if (!std::strcmp(argv[1], "pm"))    return mode_pm(argc, argv);
+  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA|pm)\n", argv[1]);
   return 1;
 }
