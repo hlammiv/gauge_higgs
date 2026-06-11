@@ -13,6 +13,8 @@
 //             prints <B>/link for both branches; a hysteresis gap = first-order line (the
 //             Bowler/Damgaard-Heller thermal-cycling locator).
 #include "u1/u1_frozen.hpp"
+#include "u1/monopole.hpp"    // monopole_density<D> (rho_M); include BEFORE anything redefining reduced_plaq_angle
+#include "u1/gauge_obs.hpp"   // wilson_grids, polyakov_abs (|P_n|), creutz_chi (sigma_1/sigma_q) -- DEFINITIVE discriminants
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -41,11 +43,25 @@ int mode_point(int argc, char** argv) {
               kDim, L, beta, kappa, q, nsweep, ntherm, n_or);
   s.thermalize((int)ntherm);
   double mA = 0, mB = 0, mP = 0, mL = 0, mA2 = 0, mB2 = 0; long n = 0;
+  // DEFINITIVE gauge-sector discriminants (docs/gauge_phase_observables_DEFINITIVE.md), measured on a stride.
+  double mRho = 0, mP1 = 0, mPq = 0; long ng = 0;
+  WGrid w1(3, std::vector<double>(3, 0.0)), wq(3, std::vector<double>(3, 0.0));
+  WGrid acc1(3, std::vector<double>(3, 0.0)), accq(3, std::vector<double>(3, 0.0));
   for (long i = 0; i < nsweep; ++i) {
     s.sweep();
     const double A = s.A(), B = s.B();
     mA += A; mB += B; mA2 += A * A; mB2 += B * B; mP += s.avg_plaq(); mL += s.link_energy(); ++n;
+    if (i % 4 == 0) {                                  // gauge discriminants on a stride (decorrelate + cheaper)
+      mRho += monopole_density<kDim>(s.th, s.lat);
+      mP1  += polyakov_abs<kDim>(s.th, s.lat, 1);
+      mPq  += polyakov_abs<kDim>(s.th, s.lat, q);
+      wilson_grids<kDim>(s.th, s.lat, q, 2, w1, wq);
+      for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] += w1[R][T]; accq[R][T] += wq[R][T]; }
+      ++ng;
+    }
   }
+  for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] /= ng; accq[R][T] /= ng; }
+  const double sig1 = creutz_chi(acc1, 2), sigq = creutz_chi(accq, 2);   // sigma_1 (charge-1) + sigma_q control
   const double V = double(s.lat.vol);
   // susceptibilities = Var/vol (intensive); chi_link (conjugate to kappa) PEAKS at the Higgs transition,
   // chi_plaq (conjugate to beta) peaks at the gauge transition. The order parameter, NOT the hopping energy.
@@ -53,6 +69,9 @@ int mode_point(int argc, char** argv) {
   const double chiA = (mA2 / n - (mA / n) * (mA / n)) / V;
   std::printf("# <A>=%.4f  <B>=%.4f  <plaq>=%.5f  <cos>_link=%.5f\n", mA / n, mB / n, mP / n, mL / n);
   std::printf("# chi_plaq=%.5f  chi_link=%.5f   (Var/vol; peak => transition)\n", chiA, chiB);
+  // IDENTIFY set: sigma_1>0 = charge-1 confined (Confined OR deep-Higgs-Z_q); sigma_q=control; |P1| = deconf order param.
+  std::printf("# rho_M=%.5f  |P1|=%.5f  |Pq|=%.5f  sigma1=%.5f  sigmaq=%.5f   (sigma=chi(2,2); area>0=confine)\n",
+              mRho / ng, mP1 / ng, mPq / ng, sig1, sigq);
   std::printf("# gauge_acc=%.2f gor_acc=%.2f zq_flip=%.2f matter_acc=%.2f step=%.3f\n",
               s.gauge_acc(), s.gor_rate(), s.zq_flip(), s.matter_acc(), s.gauge_step);
   return 0;
