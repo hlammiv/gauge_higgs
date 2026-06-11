@@ -38,18 +38,19 @@ def logsumexp_bins(vals, keys, ukeys):
 
 
 def two_peaks(P):
-    """Return (i_lo, i_hi, i_valley) for the two highest separated local maxima of P, or None."""
-    pk = [i for i in range(len(P)) if (i == 0 or P[i] >= P[i-1]) and (i == len(P)-1 or P[i] >= P[i+1])]
-    pk = [i for i in pk if np.isfinite(P[i])]
+    """Two highest INTERIOR local maxima separated by a valley. ENDPOINTS ARE NOT PEAKS --
+    a maximum at the domain edge means the tile is too small (the real peak is outside), so it
+    is a boundary artifact, not a measurement. Returns ((i1,i2,iv) or None, edge_pileup_flag)."""
+    n = len(P); fin = np.isfinite(P)
+    edge = (fin[0] and fin[1] and P[0] >= P[1]) or (fin[n-1] and fin[n-2] and P[n-1] >= P[n-2])
+    pk = [i for i in range(1, n - 1) if fin[i] and P[i] >= P[i-1] and P[i] >= P[i+1]]
     if len(pk) < 2:
-        return None
-    # take the two highest peaks that are separated by a valley
-    pk.sort(key=lambda i: -P[i])
-    i1, i2 = sorted(pk[:2])
+        return None, edge
+    pk.sort(key=lambda i: -P[i]); i1, i2 = sorted(pk[:2])
     iv = i1 + int(np.argmin(P[i1:i2+1]))
     if iv == i1 or iv == i2:
-        return None
-    return i1, i2, iv
+        return None, edge
+    return (i1, i2, iv), edge
 
 
 def main():
@@ -81,43 +82,52 @@ def main():
             return lnrho - s * A + args.fix_kappa * B
 
     scans = np.linspace(args.scan[0], args.scan[1], args.nscan)
-    best = None
-    rows = []
+    dscan = (args.scan[1] - args.scan[0]) / (args.nscan - 1)
+    spacing = float(np.median(np.diff(uO)))            # order-param grid quantization
+    sym = "kappa_c" if args.mode == "higgs" else "beta_c"
+    opar = "B" if args.mode == "higgs" else "A"
+    best = None; n_dp = 0; n_edge = 0
     for s in scans:
         P = logsumexp_bins(expo(s), Ok, uO)
-        tp = two_peaks(P)
+        tp, edge = two_peaks(P)
+        if edge:
+            n_edge += 1
         if tp is None:
-            rows.append((s, None)); continue
+            continue
+        n_dp += 1
         i1, i2, iv = tp
-        dh = P[i1] - P[i2]                     # peak-height difference (0 => equal weight)
-        barrier = min(P[i1], P[i2]) - P[iv]    # Delta F (in -ln P units)
-        latent = abs(uO[i2] - uO[i1])
-        rows.append((s, (dh, barrier, latent, uO[i1], uO[i2])))
-        if best is None or abs(dh) < abs(best[1][0]):
-            best = (s, (dh, barrier, latent, uO[i1], uO[i2]), P)
+        dh = P[i1] - P[i2]; barrier = min(P[i1], P[i2]) - P[iv]
+        if best is None or abs(dh) < abs(best[1]):
+            best = (s, dh, barrier, uO[i1], uO[i2], P, edge)
 
-    print(f"# {args.mode} transition, fixed {fixed}, scan {args.scan}, {len(cells)} cells, V={V}")
-    ndp = sum(1 for s, r in rows if r is not None)
-    print(f"# double-peak resolved in {ndp}/{len(scans)} scan points "
-          + ("(NONE -> not resolved as first-order at this L/resolution => crossover-like)" if ndp == 0 else ""))
+    print(f"# {args.mode} transition, fixed {fixed}, scan [{args.scan[0]},{args.scan[1]}] ({args.nscan} pts, d={dscan:.3f}), "
+          f"{len(cells)} cells, V={V}")
+    print(f"# order-param grid spacing d{opar}={spacing:.0f} -> peak positions/latent heat resolved only to +-{spacing:.0f}")
+    print(f"# interior double-peak in {n_dp}/{args.nscan} scan pts; boundary pile-up in {n_edge}/{args.nscan}")
+    if n_edge:
+        print(f"# WARNING: probability reaches a domain edge in {n_edge} scan pts -> tile too small there; not physical.")
     if best is None:
-        print("# NO equal-weight double peak found -> transition NOT numerically resolved here.")
+        print(f"# RESULT: no interior double-peak in range -> transition NOT numerically resolved at this L/domain.")
         return
-    s_c, (dh, barrier, latent, olo, ohi), P = best
-    sym = "kappa_c" if args.mode == "higgs" else "beta_c"
-    print(f"# EQUAL-WEIGHT {sym} = {s_c:.4f}  (peak-height diff {dh:+.3f})")
-    print(f"# latent heat  Delta{'B' if args.mode=='higgs' else 'A'} = {ohi-olo:.1f}  (peaks at {olo:.0f}, {ohi:.0f})")
-    print(f"# free-energy BARRIER Delta F = {barrier:.3f}  (per-volume {barrier/V:.5f}); grows with V => FIRST ORDER")
+    s_c, dh, barrier, olo, ohi, P, edge = best
+    balanced = abs(dh) < 2.0                            # equal-weight requires |dh|->0 (ln units)
+    ok = balanced and not edge
+    print(f"# best-balanced: {sym}={s_c:.3f}+-{dscan:.3f}(scan)  |peak-height diff|={abs(dh):.2f}"
+          + ("" if balanced else "  <-- NOT balanced (|dh|>2): equal-weight NOT located"))
+    print(f"# peaks at {opar}={olo:.0f},{ohi:.0f} (+-{spacing:.0f}); latent Delta{opar}={ohi-olo:.0f}+-{spacing:.0f}"
+          + ("  [HIGH PEAK ON BOUNDARY -> artifact, not physical]" if edge else ""))
+    print(f"# barrier Delta F={barrier:.2f} (ln P) at THIS SINGLE volume V={V}. "
+          f"ORDER IS NOT DETERMINED FROM ONE L: first-order requires Delta F(L) to GROW with volume (FSS).")
+    print(f"# VERDICT: {'genuine interior double-peak resolved' if ok else 'NOT a clean resolved transition (see warnings above)'}.")
 
     if args.plot:
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-        plt.figure(figsize=(6.5, 4.5))
-        Pn = P - P.max()
+        plt.figure(figsize=(6.5, 4.5)); Pn = P - P.max()
         plt.plot(uO, Pn, "o-", ms=3)
         plt.axvline(olo, color="g", ls=":"); plt.axvline(ohi, color="r", ls=":")
-        plt.xlabel("B (matter)" if args.mode == "higgs" else "A (gauge)")
-        plt.ylabel("ln P (reweighted)")
-        plt.title(f"{args.mode}: equal-weight {sym}={s_c:.3f}, latent={ohi-olo:.0f}, barrier={barrier:.2f}")
+        plt.xlabel(f"{opar} ({'matter' if args.mode=='higgs' else 'gauge'})"); plt.ylabel("ln P (reweighted)")
+        flag = "" if ok else "  [unresolved/boundary]"
+        plt.title(f"{args.mode}: {sym}={s_c:.3f}+-{dscan:.3f}, |dh|={abs(dh):.1f}, barrier={barrier:.2f} (L only){flag}")
         plt.tight_layout(); plt.savefig(args.plot, dpi=130); print("wrote", args.plot)
 
 
