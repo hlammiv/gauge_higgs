@@ -77,6 +77,7 @@ int mode_point(int argc, char** argv) {
               mRho / ng, mP1 / ng, mPq / ng, sig1, sigq);
   std::printf("# gauge_acc=%.2f gor_acc=%.2f zq_flip=%.2f matter_acc=%.2f step=%.3f\n",
               s.gauge_acc(), s.gor_rate(), s.zq_flip(), s.matter_acc(), s.gauge_step);
+  std::printf("# DONE\n");
   return 0;
 }
 
@@ -224,6 +225,7 @@ int mode_pm(int argc, char** argv) {
   const int meas_every = (int)ai(9, 5);
   const std::uint64_t seed = (std::uint64_t)ai(10, 7);
   const int n_or = (int)ai(11, 3);
+  const int Rmax = (int)ai(12, 0);   // >0: ALSO emit the SPATIAL charge-1 Wilson grid W[R][T] (V(R) cross-check)
 
   std::array<int, kDim> e{}; e[0] = Lt; for (int m = 1; m < kDim; ++m) e[m] = Ls;   // dir 0=time(Lt), 1..=space(Ls)
   U1Frozen<kDim> s(e, seed);
@@ -236,6 +238,8 @@ int mode_pm(int argc, char** argv) {
   double mP = 0, mL = 0, mRho = 0, mP1 = 0, mPq = 0; long nm = 0;
   WGrid w1(3, std::vector<double>(3, 0.0)), wq(3, std::vector<double>(3, 0.0));
   WGrid acc1(3, std::vector<double>(3, 0.0)), accq(3, std::vector<double>(3, 0.0));
+  const int WRT = Rmax + 1;
+  std::vector<std::vector<Real>> perW;   // per-config flattened SPATIAL charge-1 grid (for V(R)+jackknife)
   for (long i = 0; i < nsweep; ++i) {
     s.sweep();
     if (i % meas_every == 0) {
@@ -245,6 +249,13 @@ int mode_pm(int argc, char** argv) {
       mP1 += polyakov_abs<kDim>(s.th, s.lat, 1); mPq += polyakov_abs<kDim>(s.th, s.lat, q);
       wilson_grids<kDim>(s.th, s.lat, q, 2, w1, wq);
       for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] += w1[R][T]; accq[R][T] += wq[R][T]; }
+      if (Rmax > 1) {   // SPATIAL planes only (mu0=1) -> clean V(R), decoupled from the small L_t
+        WGrid sg1(WRT, std::vector<double>(WRT, 0.0)), sgq(WRT, std::vector<double>(WRT, 0.0));
+        wilson_grids<kDim>(s.th, s.lat, q, Rmax, sg1, sgq, /*mu0=*/1);
+        std::vector<Real> flat(static_cast<std::size_t>(WRT) * WRT, 0.0);
+        for (int R = 1; R <= Rmax; ++R) for (int T = 1; T <= Rmax; ++T) flat[R * WRT + T] = sg1[R][T];
+        perW.push_back(std::move(flat));
+      }
       ++nm;
     }
   }
@@ -262,6 +273,28 @@ int mode_pm(int argc, char** argv) {
   for (int g = 0; g < ng; ++g)
     std::printf("# phat2=%.4f  R=%.5f +- %.5f\n", mom.phat2[g],
                 g < (int)fit.R.size() ? fit.R[g] : 0.0, g < (int)fit.R_err.size() ? fit.R_err[g] : 0.0);
+  // SPATIAL charge-1 Wilson grid W[R][T] +- jackknife (the V(R) cross-check), same configs as m_gamma above
+  if (Rmax > 1 && !perW.empty()) {
+    const std::size_t N = perW.size(), NF = static_cast<std::size_t>(WRT) * WRT;
+    const int gp = (int)std::min<std::size_t>(8, N);
+    std::vector<Real> mean(NF, 0.0), jerr(NF, 0.0);
+    for (auto& w : perW) for (std::size_t k = 0; k < NF; ++k) mean[k] += w[k];
+    for (auto& m : mean) m /= (Real)N;
+    if (gp >= 2) {
+      std::vector<std::vector<Real>> gs(gp, std::vector<Real>(NF, 0.0)); std::vector<long> gc(gp, 0);
+      for (std::size_t c = 0; c < N; ++c) { int g = (int)(c * gp / N); for (std::size_t k = 0; k < NF; ++k) gs[g][k] += perW[c][k]; gc[g]++; }
+      for (std::size_t k = 0; k < NF; ++k) {
+        double tot = 0, totc = 0; for (int g = 0; g < gp; ++g) { tot += gs[g][k]; totc += gc[g]; }
+        double jm = 0; std::vector<double> v(gp);
+        for (int g = 0; g < gp; ++g) { v[g] = (tot - gs[g][k]) / (totc - gc[g]); jm += v[g]; }
+        jm /= gp; double var = 0; for (int g = 0; g < gp; ++g) var += (v[g] - jm) * (v[g] - jm);
+        jerr[k] = std::sqrt(var * (gp - 1) / (double)gp);
+      }
+    }
+    for (int R = 1; R <= Rmax; ++R) for (int T = 1; T <= Rmax; ++T)
+      std::printf("# W R=%d T=%d  W=%.6e +- %.3e\n", R, T, mean[R * WRT + T], jerr[R * WRT + T]);
+  }
+  std::printf("# DONE\n");
   return 0;
 }
 
@@ -362,6 +395,7 @@ int mode_pot(int argc, char** argv) {
   for (int R = 1; R <= Rmax; ++R)
     for (int T = 1; T <= Rmax; ++T)
       std::printf("# W R=%d T=%d  W=%.6e +- %.3e\n", R, T, mean[R * RT + T], jerr[R * RT + T]);
+  std::printf("# DONE\n");
   return 0;
 }
 
@@ -376,7 +410,7 @@ int main(int argc, char** argv) {
       "  %s hyst  <L> <beta> <q> <kmin> <kmax> <nk> [nper ntherm0 seed n_or]\n"
       "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
       "  %s mucaA <L> <beta> <kappa> <q> <Amin> <Amax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
-      "  %s pm    <Ls> <Lt> <beta> <kappa> <q> [nsweep ntherm meas_every seed n_or]   (m_gamma; Ls>=16)\n"
+      "  %s pm    <Ls> <Lt> <beta> <kappa> <q> [nsweep ntherm meas_every seed n_or Rmax]   (m_gamma; Rmax>1 ALSO emits spatial V(R))\n"
       "  %s pot   <L> <beta> <kappa> <q> <Rmax> [nsweep ntherm meas_every seed n_or]  (static potential V(R))\n"
       "  %s zq    <L> <beta> <q> [nsweep ntherm seed]   (pure Z_q gauge; kappa->inf matching target)\n",
       argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);

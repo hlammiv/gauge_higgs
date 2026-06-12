@@ -12,15 +12,20 @@ import sys, re
 import numpy as np
 from scipy.optimize import curve_fit
 
-HDR = re.compile(r"pot: L=(\d+) beta=([\d.]+) kappa=([\d.]+) q=(\d+) Rmax=(\d+)")
+HDR_POT = re.compile(r"pot: L=(\d+) beta=([\d.]+) kappa=([\d.]+) q=(\d+) Rmax=(\d+)")
+HDR_PM  = re.compile(r"pm: Ls=(\d+) Lt=(\d+) beta=([\d.]+) kappa=([\d.]+) q=(\d+)")  # combined pm+V(R) output
 WL  = re.compile(r"W R=(\d+) T=(\d+)\s+W=([\d.eE+\-]+)\s+\+-\s+([\d.eE+\-]+)")
 
 def load(fn):
-    t = open(fn).read(); h = HDR.search(t)
-    meta = dict(L=int(h[1]), beta=float(h[2]), kappa=float(h[3]), q=int(h[4]), Rmax=int(h[5]))
-    W = {}
-    for R, T, w, e in WL.findall(t):
-        W[(int(R), int(T))] = (float(w), float(e))
+    t = open(fn).read()
+    W = {(int(R), int(T)): (float(w), float(e)) for R, T, w, e in WL.findall(t)}
+    h = HDR_POT.search(t)
+    if h:
+        meta = dict(L=int(h[1]), beta=float(h[2]), kappa=float(h[3]), q=int(h[4]), Rmax=int(h[5]))
+    else:
+        h = HDR_PM.search(t)
+        meta = dict(L=int(h[1]), beta=float(h[3]), kappa=float(h[4]), q=int(h[5]),
+                    Rmax=max((R for (R, _T) in W), default=0))
     return meta, W
 
 def V_of_R(W, Rmax, tmin=1, tmax=None):

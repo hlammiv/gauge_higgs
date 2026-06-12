@@ -18,9 +18,12 @@ namespace u1 {
 using WGrid = std::vector<std::vector<Real>>;
 
 // charge-1 and charge-q rectangular Wilson loops g1[R][T]=<cos(loop)>, gq[R][T]=<cos(q*loop)>,
-// 1<=R,T<=Rmax, symmetrized over all mu<nu planes and all sites (rows/col 0 unused).
+// 1<=R,T<=Rmax, symmetrized over mu<nu planes (mu>=mu0) and all sites (rows/col 0 unused).
+// mu0=0 -> all planes (default). mu0=1 -> SPATIAL planes only (skip dir-0=time): on an anisotropic
+// L_s^3 x L_t lattice this gives a clean spatial static potential V(R) decoupled from the small L_t.
 template <int D>
-void wilson_grids(const std::vector<Real>& th, const Lattice<D>& lat, int q, int Rmax, WGrid& g1, WGrid& gq) {
+void wilson_grids(const std::vector<Real>& th, const Lattice<D>& lat, int q, int Rmax, WGrid& g1, WGrid& gq,
+                  int mu0 = 0) {
   for (auto& r : g1) std::fill(r.begin(), r.end(), 0.0);
   for (auto& r : gq) std::fill(r.begin(), r.end(), 0.0);
   std::int64_t count = 0;
@@ -31,7 +34,7 @@ void wilson_grids(const std::vector<Real>& th, const Lattice<D>& lat, int q, int
     std::int64_t lcount = 0;
     #pragma omp for schedule(static) nowait
     for (std::int64_t x = 0; x < lat.vol; ++x)
-      for (int mu = 0; mu < D; ++mu)
+      for (int mu = mu0; mu < D; ++mu)
         for (int nu = mu + 1; nu < D; ++nu) {
           for (int R = 1; R <= Rmax; ++R)
             for (int T = 1; T <= Rmax; ++T) {
