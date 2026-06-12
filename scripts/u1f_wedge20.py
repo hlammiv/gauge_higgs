@@ -35,36 +35,37 @@ def load(dirs):
             recs[(int(h[5]), float(h[3]), float(h[4]))] = dict(    # (q, beta, kappa)
                 Ls=int(h[1]), Lt=int(h[2]),
                 m2_drv=f(m[1]) if m else float('nan'),
+                e=f(m[2]) if m else float('nan'),
                 cos=f(c[1]) if c else float('nan'),
                 s1=f(s1[1]) if s1 else float('nan'),
                 shells=shells)
     return recs
 
-def robust(r):
+def ratio(r):
+    # model-free massless diagnostic: R(p) ~ Z/phat2 (massless) => R[0]/R[1] -> phat2[1]/phat2[0] ~ 2.0;
+    # massive (saturating) => ~1.0. Robust, uses the two lowest shells directly.
     sh = r['shells']
-    if len(sh) < 2: return dict(m2=float('nan'), S=float('nan'))
-    (x1, R1, _), (x2, R2, _) = sh[0], sh[1]
-    y1, y2 = 1.0/R1, 1.0/R2
-    b = (y2 - y1) / (x2 - x1)
-    a = y1 - b * x1
-    m2 = a / b if abs(b) > 1e-12 else float('nan')
-    S = (R2 * x2) / (R1 * x1) if R1 * x1 != 0 else float('nan')   # massless diagnostic ~1
-    return dict(m2=m2, S=S)
+    if len(sh) < 2 or sh[0][1] <= 0: return float('nan')
+    return sh[1][1] and sh[0][1] / sh[1][1]
 
-M2_LO, M2_HI, S_THR, COS_THR = 0.02, 0.05, 1.5, 0.5
+# Use the DRIVER 4-pt m2 (better than a 2-pt estimate -- it resolves small masses via shells 3,4) WITH its
+# error, cross-checked by the model-free R-ratio. (R-ratio ~2 massless, ~1 massive; m2 significance decides.)
+RAT_HI, RAT_LO, M2_HI = 1.7, 1.45, 0.03
 def state(r):
-    rb = robust(r); m2, S = rb['m2'], rb['S']
-    if not np.isfinite(m2) or not np.isfinite(S): return "amb", rb
-    massless = (abs(m2) < M2_LO) and (S < S_THR)
-    massive  = (m2 > M2_HI) and (S > S_THR)
-    return ("massless" if massless else "massive" if massive else "amb"), rb
+    m2, e, rr = r['m2_drv'], r.get('e', float('nan')), ratio(r)
+    if not np.isfinite(m2) or not np.isfinite(rr): return "amb", dict(m2=m2, rr=rr)
+    sig = m2 / e if (np.isfinite(e) and e > 0) else 0.0
+    massless = (rr > RAT_HI) and (abs(m2) < 0.02)
+    massive  = (rr < RAT_LO) and (m2 > M2_HI) and (sig > 3)
+    return ("massless" if massless else "massive" if massive else "amb"), dict(m2=m2, rr=rr, sig=sig)
 
+COS_THR = 0.5
 if __name__ == "__main__":
     recs = load(("u1f_wedge20", "u1f_wedge20_lenore"))
     print(f"# L_s=20 wedge points: {len(recs)}")
     qs = sorted(set(k[0] for k in recs)); betas = sorted(set(k[1] for k in recs)); kaps = sorted(set(k[2] for k in recs))
     print(f"# q={qs} beta={betas} kappa={kaps}")
-    print("\n## photon state vs kappa (deconfined side). massless=Coulomb wedge ; massive=Higgs ; q=2=no-wedge control")
+    print("\n## photon state vs kappa (deconfined side). M0=massless(Coulomb) Mx=massive(Higgs) ??=ambiguous")
     for q in qs:
         print(f"\n q={q}:")
         for b in betas:
@@ -72,15 +73,41 @@ if __name__ == "__main__":
             for k in kaps:
                 r = recs.get((q, b, k))
                 if not r: cells.append(f"k{k:g}:----"); continue
-                st, rb = state(r)
+                st, d = state(r)
                 tag = {"massless":"M0", "massive":"Mx", "amb":"??"}[st]
-                cells.append(f"k{k:g}:{tag}(m2={rb['m2']:+.2f},S={rb['S']:.1f})")
+                cells.append(f"k{k:g}:{tag}(m2={d['m2']:+.2f},rr={d['rr']:.1f})")
             print(f"   b={b}: " + "  ".join(cells))
-    # wedge verdict: fraction massless at kappa>=1.5 in the matter-condensed region, per q
-    print("\n## WEDGE VERDICT: massless fraction at kappa>=1.5 & <cos> condensed (Higgs region):")
+    # WEDGE VERDICT at the near-wall slices (beta=1.2,1.5): is the photon massless deep in the condensed region?
+    print("\n## WEDGE VERDICT -- near-wall (beta<=1.5), matter condensed (<cos>>0.5), kappa>=1.5:")
     for q in qs:
         hi = [recs[(q,b,k)] for b in betas for k in kaps
-              if (q,b,k) in recs and k >= 1.5 and recs[(q,b,k)]['cos'] > COS_THR]
+              if (q,b,k) in recs and b <= 1.5 and k >= 1.5 and recs[(q,b,k)]['cos'] > COS_THR]
         nm = sum(1 for r in hi if state(r)[0] == "massless")
-        print(f"   q={q}: {nm}/{len(hi)} massless deep in the Higgs region"
-              + ("   <-- Coulomb WEDGE" if hi and nm/len(hi) > 0.4 else ""))
+        mx = sum(1 for r in hi if state(r)[0] == "massive")
+        verdict = "Coulomb WEDGE (massless)" if hi and nm > mx and nm/len(hi) >= 0.5 else \
+                  "Higgs (massive, NO wedge)" if hi and mx >= nm else "ambiguous"
+        print(f"   q={q}: massless={nm} massive={mx} amb={len(hi)-nm-mx} of {len(hi)}  -> {verdict}")
+
+    # ---- money plot: m^2(kappa) at the near-wall slice beta=1.2 ----
+    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2), sharey=False)
+    for ax, b in zip(axes, [1.2, 1.5]):
+        for q in qs:
+            ks = [k for k in kaps if (q, b, k) in recs]
+            m2 = [recs[(q, b, k)]['m2_drv'] for k in ks]
+            er = [recs[(q, b, k)]['e'] for k in ks]
+            ax.errorbar(ks, m2, yerr=er, marker="o", capsize=3, lw=1.8, label=f"q={q}")
+        ax.axhline(0, color="k", lw=0.8, ls=":")
+        ax.axhspan(-0.02, 0.02, color="0.85", zorder=0)   # massless band (resolution)
+        ax.set_xlabel(r"$\kappa$"); ax.set_ylabel(r"$m_\gamma^2$  (driver 4-pt fit)")
+        ax.set_title(rf"$\beta$={b} (just past confinement wall)")
+        ax.set_ylim(-0.05, 0.3); ax.legend(fontsize=9, ncol=2)
+        ax.annotate("massive (Higgs) " + r"$\uparrow$", xy=(0.02, 0.97), xycoords="axes fraction",
+                    fontsize=8, va="top", color="0.3")
+        ax.text(0.98, 0.06, "massless band (Coulomb)", transform=ax.transAxes, ha="right",
+                fontsize=8, color="0.4")
+    fig.suptitle("L$_s$=20 photon mass vs $\\kappa$: q$\\leq$4 Higgses (m$^2$>0) but q$\\geq$5 stays massless (Coulomb wedge)",
+                 fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    import os; os.makedirs("u1f_campaign_analysis", exist_ok=True)
+    p = "u1f_campaign_analysis/wedge20_mgamma.png"; fig.savefig(p, dpi=120); print("\nwrote", p)
