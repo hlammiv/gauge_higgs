@@ -75,12 +75,18 @@ M2_THR  = 0.013       # massless cut for the tentative wedge overlay (~2x median
 print(f"\n# thresholds: sigma_1> {S1_THR} charge-1 CONFINED (sharp) ; <cos>> {COS_THR} matter CONDENSED (crossover)")
 
 # 0 Confined, 1 Coulomb, 2 Higgs
+# CONFINEMENT (sigma_1) DECIDES FIRST: charge-1 area law = Confined REGARDLESS of kappa. For q>=2 the charge-q
+# matter cannot screen charge-1 (1 != 0 mod q), so the area law survives to kappa->inf (matter freezes onto the
+# residual Z_q, which is itself confined below its beta_c). => the confined phase CONNECTS kappa=0 -> kappa=inf,
+# its boundary approaching the pure-Z_q beta_c (verified: at kappa=2.5 confined up to beta~0.4(q2)/0.8(q4)/1.0(q>=5)
+# = the matching Z_q beta_c). Only on the DECONFINED (charge-1 free) side does <cos> split Coulomb from Higgs.
+# (Earlier bug: testing <cos> first painted the deep-Z_q-confined region "Higgs" and made Confined terminate.)
 def cls(r):
-    matter = np.isfinite(r['cos']) and r['cos'] > COS_THR    # Higgs: matter condensed
-    s1conf = np.isfinite(r['s1'])  and r['s1']  > S1_THR     # charge-1 confined (sharp gauge axis)
-    if matter:   return 2     # Higgs (matter condensed)
-    if s1conf:   return 0     # Confined (charge-1 confined, matter disordered)
-    return 1                  # Coulomb (charge-1 free, matter disordered)
+    s1conf = np.isfinite(r['s1'])  and r['s1']  > S1_THR     # charge-1 area law -> confined at ANY kappa
+    if s1conf:   return 0     # Confined (incl. deep-Z_q-confined; connects to kappa=inf)
+    matter = np.isfinite(r['cos']) and r['cos'] > COS_THR    # on the deconfined side: matter condensed?
+    if matter:   return 2     # Higgs (charge-1 free + matter condensed)
+    return 1                  # Coulomb (charge-1 free + matter disordered)
 
 def wedge_candidate(r):
     # inside the Higgs, charge-1 free, photon CONFIDENTLY massless -> tentative Coulomb-wedge cell (m_gamma noisy!)
@@ -109,8 +115,10 @@ for ax, q in zip(axes.flat, qs):
     # SHARP confinement line: sigma_1 = S1_THR (the genuine gauge observable -- locates beta_c at kappa=0)
     try: ax.contour(B, K, S1g, levels=[S1_THR], colors="k", linewidths=2.2)
     except Exception: pass
-    # SOFT Higgs onset: <cos> = COS_THR (Elitzur crossover -- dashed to flag it is not a sharp transition)
-    try: ax.contour(B, K, COSg, levels=[COS_THR], colors="k", linewidths=1.8, linestyles="--")
+    # SOFT Higgs onset: <cos> = COS_THR, ONLY on the deconfined side (it is a Coulomb|Higgs boundary there;
+    # inside the confined region matter also condenses but it is NOT a transition -- FS analytic connection).
+    COSm = np.where(S1g <= S1_THR, COSg, np.nan)
+    try: ax.contour(B, K, COSm, levels=[COS_THR], colors="k", linewidths=1.8, linestyles="--")
     except Exception: pass
     # tentative wedge candidates (m_gamma-massless inside Higgs) -- m_gamma noisy at L_s=16
     wx = [r['b'] for r in pts if wedge_candidate(r)]; wy = [r['k'] for r in pts if wedge_candidate(r)]
@@ -123,20 +131,25 @@ fig.legend(handles=[Patch(facecolor=cmap(i), label=labels[i]) for i in range(3)]
             plt.Line2D([0],[0], marker="o", mfc="none", mec="cyan", mew=1.8, ms=10, ls="",
                        label=r"wedge candidate (m$_\gamma\!\approx$0 in Higgs; tentative @L$_s$=16)")],
            loc="lower center", ncol=3, fontsize=9)
-fig.suptitle("U(1)+charge-q Higgs (frozen, 16$^3\\times$8): $\\sigma_1$ confinement axis (sharp) $\\times$ $\\langle\\cos\\rangle$ matter axis (crossover)",
+fig.suptitle("U(1)+charge-q Higgs (frozen, 16$^3\\times$8): Confined ($\\sigma_1$ area law) connects $\\kappa$=0$\\to\\infty$, boundary $\\to$ pure-Z$_q$ $\\beta_c$",
              fontsize=13)
 fig.tight_layout(rect=[0, 0.06, 1, 0.96])
 os.makedirs("u1f_campaign_analysis", exist_ok=True)
 p = "u1f_campaign_analysis/phase3_gauge.png"; fig.savefig(p, dpi=120); print("\nwrote", p)
 
-# ---- per-q phase census + kappa=0 sanity row + wedge-candidate count ----
-print("\n## phase census (kappa=0 must show BOTH Confined and Coulomb):")
+# ---- per-q phase census + kappa=0 / kappa=max confined-boundary sanity ----
+print("\n## census + topology (kappa=0 row: Confined->Coulomb ; kappa=max: Confined must persist = connects to inf):")
+ZQC = {2:0.44, 3:0.70, 4:0.95, 5:1.02, 6:1.05, 8:1.08}   # approx pure-Z_q beta_c (from matching)
 for q in qs:
     pts = [r for r in recs if r['q'] == q]
     if not pts: continue
     n = [0,0,0]
     for r in pts: n[cls(r)] += 1
     row0 = sorted([r for r in pts if abs(r['k']) < 1e-6], key=lambda r: r['b'])
-    seq = "".join("CcH"[cls(r)] for r in row0)   # kappa=0 row, low->high beta
-    nw = sum(1 for r in pts if wedge_candidate(r))
-    print(f"  q={q}: Confined={n[0]:2d} Coulomb={n[1]:2d} Higgs={n[2]:2d} | kappa=0 row(lo->hi beta)='{seq}' | wedge-cand={nw}")
+    seq0 = "".join("CcH"[cls(r)] for r in row0)
+    kmax = max(r['k'] for r in pts)
+    rowT = sorted([r for r in pts if abs(r['k']-kmax) < 1e-6], key=lambda r: r['b'])
+    confT = [r['b'] for r in rowT if cls(r) == 0]
+    bbound = max(confT) if confT else None
+    print(f"  q={q}: Conf={n[0]:2d} Coul={n[1]:2d} Higgs={n[2]:2d} | k=0:'{seq0}' | "
+          f"k={kmax:g} confined up to beta={bbound} (pure-Z{q} beta_c~{ZQC.get(q,'?')})")
