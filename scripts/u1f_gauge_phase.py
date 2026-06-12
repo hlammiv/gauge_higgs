@@ -86,29 +86,69 @@ for (q, b, k), rr in w20.load(("u1f_wedge20", "u1f_wedge20_lenore")).items():
 print(f"# folded L_s=20 m_gamma verdicts: {len(W20)} points "
       f"(massless={sum(v=='massless' for v in W20.values())} massive={sum(v=='massive' for v in W20.values())})")
 
-# NEAR-WALL only: m_gamma DISCRIMINATES Coulomb/Higgs only where a Higgs mass would be RESOLVABLE -- i.e. near
-# the confinement wall (beta<=BETA_W20). At weaker coupling (beta>=2) the lattice spacing is fine, so even a real
-# Higgs mass m^2*a^2 sits BELOW the L_s=20 floor and reads false-massless for EVERY q (not informative) -> there
-# we fall back to <cos>. The wedge is a near-wall phenomenon (intermediate Coulomb just past Confined) anyway.
-BETA_W20 = 1.6
-def w20_verdict(r):
-    if r['b'] > BETA_W20: return None                          # weak coupling: m_gamma sub-floor, don't trust
-    return W20.get((r['q'], round(r['b'], 2), round(r['k'], 2)))
+# --- HARDENED: prefer the L_s=24 m_gamma verdict (finer floor 0.068, finite-T checked) over L_s=20 ---
+H24 = re.compile(r"Ls=(\d+) Lt=(\d+) beta=([\d.]+) kappa=([\d.]+) q=(\d+)")
+M24 = re.compile(r"m2=([\-\d.eE]+)\s+\+-\s+([\-\d.eE]+)")
+S24 = re.compile(r"phat2=([\d.]+)\s+R=([\-\d.eE]+)\s+\+-\s+([\-\d.eE]+)")
+def _ratio_state(m2, e, sh):    # R(pmin)/R(2nd): ~2.0 massless, ~1.0 massive; m2 significance breaks ties
+    if len(sh) < 2 or not np.isfinite(m2) or not sh[1][1]: return "amb"
+    rr = sh[0][1] / sh[1][1]
+    if rr > 1.7 and abs(m2) < 0.02: return "massless"
+    if rr < 1.45 and m2 > 0.03 and e and m2 > 3 * e: return "massive"
+    return "amb"
+W24 = {}    # (q,beta,kappa) -> verdict, L_s=24 L_t=8 main grid
+for fn in glob.glob("u1f_wedge24/*.out"):
+    t = open(fn).read(); h = H24.search(t)
+    if not h or int(h[2]) != 8: continue
+    sh = sorted([(f(a), f(b), f(c)) for a, b, c in S24.findall(t) if f(b) > 0])
+    m = M24.search(t)
+    W24[(int(h[5]), round(float(h[3]), 2), round(float(h[4]), 2))] = _ratio_state(f(m[1]), f(m[2]), sh)
+print(f"# L_s=24 m_gamma verdicts: {len(W24)} (massless={sum(v=='massless' for v in W24.values())} "
+      f"massive={sum(v=='massive' for v in W24.values())})")
 
-# 0 Confined, 1 Coulomb, 2 Higgs. CONFINEMENT (sigma_1) DECIDES FIRST (connects kappa=0->inf, boundary ->
-# pure-Z_q beta_c). On the DECONFINED side, split Coulomb/Higgs by the RESOLVED near-wall L_s=20 m_gamma
-# (massless=Coulomb wedge, massive=Higgs); else fall back to the <cos> matter crossover.
+# --- independent V(R) static-potential verdict (orthogonal observable): screened(Higgs) vs unscreened(Coulomb) ---
+VRV = {}
+try:
+    import u1f_vr as _vr
+    for fn in glob.glob("u1f_vr/job_*.out"):
+        meta, W = _vr.load(fn); Rs, VR, VRe = _vr.V_of_R(W, meta['Rmax']); ff = _vr.fit(Rs, VR, VRe)
+        if ff is None: continue
+        scr = (ff['sigma'] <= _vr.SIG_THR) and (ff['alpha'] <= _vr.ALPHA_THR)   # flat V -> charge-1 screened
+        VRV[(meta['q'], round(meta['beta'], 2), round(meta['kappa'], 2))] = "screened" if scr else "unscreened"
+    print(f"# V(R) verdicts: {len(VRV)} (unscreened={sum(v=='unscreened' for v in VRV.values())} "
+          f"screened={sum(v=='screened' for v in VRV.values())})")
+except Exception as e:
+    print("# V(R) load skipped:", e)
+
+# NEAR-WALL only: m_gamma discriminates Coulomb/Higgs only where a Higgs mass would be RESOLVABLE (beta<=BETA_MG);
+# at weak coupling the Higgs mass m^2*a^2 sits below the floor and reads false-massless for every q.
+BETA_MG = 1.6
+def mg_verdict(r):
+    if r['b'] > BETA_MG: return None
+    k = (r['q'], round(r['b'], 2), round(r['k'], 2))
+    v = W24.get(k)                                            # prefer hardened L_s=24
+    if v in ("massless", "massive"): return v
+    v = W20.get(k)                                            # fall back to L_s=20
+    return v if v in ("massless", "massive") else None
+
+# 0 Confined, 1 Coulomb, 2 Higgs. CONFINEMENT (sigma_1) FIRST; deconfined side split by the RESOLVED near-wall
+# m_gamma (massless=Coulomb wedge, massive=Higgs); else <cos> matter crossover.
 def cls(r):
-    s1conf = np.isfinite(r['s1']) and r['s1'] > S1_THR        # charge-1 area law -> confined at ANY kappa
-    if s1conf:   return 0     # Confined (incl. deep-Z_q-confined; connects to kappa=inf)
-    v = w20_verdict(r)
-    if v == "massless": return 1     # Coulomb -- RESOLVED (the q>=5 wedge intrudes into matter-condensed region)
-    if v == "massive":  return 2     # Higgs -- RESOLVED massive photon
-    matter = np.isfinite(r['cos']) and r['cos'] > COS_THR     # fallback: <cos> matter crossover
-    return 2 if matter else 1
+    if np.isfinite(r['s1']) and r['s1'] > S1_THR: return 0    # Confined (connects to kappa=inf)
+    v = mg_verdict(r)
+    if v == "massless": return 1                             # Coulomb -- RESOLVED wedge
+    if v == "massive":  return 2                             # Higgs -- RESOLVED
+    return 2 if (np.isfinite(r['cos']) and r['cos'] > COS_THR) else 1   # fallback <cos>
 
-def has_w20(r):  # cell whose Coulomb/Higgs label came from the (near-wall) L_s=20 m_gamma
-    return w20_verdict(r) in ("massless", "massive")
+def has_mg(r):  return mg_verdict(r) in ("massless", "massive")
+def vr_agree(r):
+    """Does the INDEPENDENT V(R) verdict match the phase label? True/False/None(no data or confined)."""
+    vv = VRV.get((r['q'], round(r['b'], 2), round(r['k'], 2)))
+    if vv is None: return None
+    ph = cls(r)
+    if ph == 1: return vv == "unscreened"    # Coulomb wedge <-> V(R) charge-1 unscreened
+    if ph == 2: return vv == "screened"      # Higgs        <-> V(R) charge-1 screened
+    return None
 
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -137,18 +177,23 @@ for ax, q in zip(axes.flat, qs):
     COSm = np.where(S1g <= S1_THR, COSg, np.nan)
     try: ax.contour(B, K, COSm, levels=[COS_THR], colors="k", linewidths=1.8, linestyles="--")
     except Exception: pass
-    # mark cells whose Coulomb/Higgs label is RESOLVED by L_s=20 m_gamma (vs the <cos> fallback)
-    wx = [r['b'] for r in pts if has_w20(r)]; wy = [r['k'] for r in pts if has_w20(r)]
-    if wx: ax.plot(wx, wy, ".", color="k", ms=4, alpha=0.55, zorder=20)
+    # dots: Coulomb/Higgs label RESOLVED by m_gamma (L_s=24 preferred); markers: INDEPENDENT V(R) check
+    dx = [r['b'] for r in pts if has_mg(r)]; dy = [r['k'] for r in pts if has_mg(r)]
+    if dx: ax.plot(dx, dy, ".", color="k", ms=4, alpha=0.5, zorder=20)
+    ax2x = [r['b'] for r in pts if vr_agree(r) is True];  ax2y = [r['k'] for r in pts if vr_agree(r) is True]
+    dgx = [r['b'] for r in pts if vr_agree(r) is False];  dgy = [r['k'] for r in pts if vr_agree(r) is False]
+    if ax2x: ax.plot(ax2x, ax2y, "P", mfc="w", mec="k", mew=1.3, ms=9, zorder=21)   # V(R) AGREES
+    if dgx:  ax.plot(dgx, dgy, "X", mfc="magenta", mec="k", mew=1.0, ms=10, zorder=21)  # V(R) DISAGREES
     ax.set_xlabel(r"$\beta$"); ax.set_ylabel(r"$\kappa$"); ax.set_title(f"q = {q}")
     ax.set_xlim(min(bs), max(bs)); ax.set_ylim(min(ks), max(ks))
 fig.legend(handles=[Patch(facecolor=cmap(i), label=labels[i]) for i in range(3)] +
-           [plt.Line2D([0],[0], color="k", lw=2.2, label=r"confinement line $\sigma_1$=%.2f (sharp)" % S1_THR),
-            plt.Line2D([0],[0], color="k", lw=1.8, ls="--", label=r"Higgs onset $\langle\cos\rangle$=%.1f (crossover)" % COS_THR),
-            plt.Line2D([0],[0], marker=".", color="k", ms=8, ls="", alpha=0.55,
-                       label=r"Coulomb/Higgs set by L$_s$=20 m$_\gamma$ (resolved wedge)")],
+           [plt.Line2D([0],[0], color="k", lw=2.2, label=r"confinement line $\sigma_1$=0.15 (sharp)"),
+            plt.Line2D([0],[0], color="k", lw=1.8, ls="--", label=r"Higgs onset $\langle\cos\rangle$=0.5 (crossover)"),
+            plt.Line2D([0],[0], marker=".", color="k", ms=8, ls="", alpha=0.5, label=r"label set by m$_\gamma$ (L$_s$=24 near-wall)"),
+            plt.Line2D([0],[0], marker="P", mfc="w", mec="k", mew=1.3, ms=9, ls="", label="V(R) AGREES (independent)"),
+            plt.Line2D([0],[0], marker="X", mfc="magenta", mec="k", ms=9, ls="", label="V(R) disagrees")],
            loc="lower center", ncol=3, fontsize=9)
-fig.suptitle("U(1)+charge-q Higgs (frozen): Confined ($\\sigma_1$, connects $\\kappa$=0$\\to\\infty$) | Coulomb | Higgs -- deconfined split by L$_s$=20 m$_\\gamma$ (q$\\geq$5 wedge)",
+fig.suptitle("U(1)+charge-q Higgs (frozen): Confined ($\\sigma_1$) | Coulomb | Higgs -- deconfined split by HARDENED L$_s$=24 m$_\\gamma$, cross-checked by V(R)",
              fontsize=12)
 fig.tight_layout(rect=[0, 0.06, 1, 0.96])
 os.makedirs("u1f_campaign_analysis", exist_ok=True)
