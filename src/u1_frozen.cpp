@@ -232,16 +232,33 @@ int mode_pm(int argc, char** argv) {
   const u1::PhotonMomenta<kDim> mom = u1::photon_momenta<kDim>(s.lat);
   const int ng = mom.n_groups();
   std::vector<std::vector<Real>> perConfig;
+  // full gauge fingerprint on the SAME points (so the phase map can be classified entirely by the gauge field).
+  double mP = 0, mL = 0, mRho = 0, mP1 = 0, mPq = 0; long nm = 0;
+  WGrid w1(3, std::vector<double>(3, 0.0)), wq(3, std::vector<double>(3, 0.0));
+  WGrid acc1(3, std::vector<double>(3, 0.0)), accq(3, std::vector<double>(3, 0.0));
   for (long i = 0; i < nsweep; ++i) {
     s.sweep();
-    if (i % meas_every == 0) perConfig.push_back(u1::photon_structure_factor<kDim>(s.th, s.lat, mom));
+    if (i % meas_every == 0) {
+      perConfig.push_back(u1::photon_structure_factor<kDim>(s.th, s.lat, mom));
+      mP += s.avg_plaq(); mL += s.link_energy();
+      mRho += monopole_density<kDim>(s.th, s.lat);
+      mP1 += polyakov_abs<kDim>(s.th, s.lat, 1); mPq += polyakov_abs<kDim>(s.th, s.lat, q);
+      wilson_grids<kDim>(s.th, s.lat, q, 2, w1, wq);
+      for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] += w1[R][T]; accq[R][T] += wq[R][T]; }
+      ++nm;
+    }
   }
+  for (int R = 1; R <= 2; ++R) for (int T = 1; T <= 2; ++T) { acc1[R][T] /= nm; accq[R][T] /= nm; }
+  const double sig1 = creutz_chi(acc1, 2), sigq = creutz_chi(accq, 2);
   const int nfit = ng >= 4 ? 4 : ng;
   const u1::PhotonMassFit fit = u1::photon_mass_fit<kDim>(perConfig, mom, nfit);
   std::printf("# u1_frozen pm: Ls=%d Lt=%d beta=%g kappa=%g q=%d  nmeas=%zu ngroups=%d nfit=%d\n",
               Ls, Lt, beta, kappa, q, perConfig.size(), ng, nfit);
   std::printf("# m_gamma=%.5f  m2=%.6f +- %.6f  phat2_min=%.4f   (m_gamma~0 => COULOMB)\n",
               fit.m_gamma, fit.m2, fit.m2_err, ng ? mom.phat2[0] : 0.0);
+  std::printf("# <plaq>=%.5f  <cos>_link=%.5f\n", mP / nm, mL / nm);
+  std::printf("# rho_M=%.5f  |P1|=%.5f  |Pq|=%.5f  sigma1=%.5f  sigmaq=%.5f\n",
+              mRho / nm, mP1 / nm, mPq / nm, sig1, sigq);
   for (int g = 0; g < ng; ++g)
     std::printf("# phat2=%.4f  R=%.5f +- %.5f\n", mom.phat2[g],
                 g < (int)fit.R.size() ? fit.R[g] : 0.0, g < (int)fit.R_err.size() ? fit.R_err[g] : 0.0);
