@@ -74,24 +74,41 @@ COS_THR = 0.50        # matter-condensation (Higgs) crossover; soft (Elitzur), t
 M2_THR  = 0.013       # massless cut for the tentative wedge overlay (~2x median R-fit error)
 print(f"\n# thresholds: sigma_1> {S1_THR} charge-1 CONFINED (sharp) ; <cos>> {COS_THR} matter CONDENSED (crossover)")
 
-# 0 Confined, 1 Coulomb, 2 Higgs
-# CONFINEMENT (sigma_1) DECIDES FIRST: charge-1 area law = Confined REGARDLESS of kappa. For q>=2 the charge-q
-# matter cannot screen charge-1 (1 != 0 mod q), so the area law survives to kappa->inf (matter freezes onto the
-# residual Z_q, which is itself confined below its beta_c). => the confined phase CONNECTS kappa=0 -> kappa=inf,
-# its boundary approaching the pure-Z_q beta_c (verified: at kappa=2.5 confined up to beta~0.4(q2)/0.8(q4)/1.0(q>=5)
-# = the matching Z_q beta_c). Only on the DECONFINED (charge-1 free) side does <cos> split Coulomb from Higgs.
-# (Earlier bug: testing <cos> first painted the deep-Z_q-confined region "Higgs" and made Confined terminate.)
-def cls(r):
-    s1conf = np.isfinite(r['s1'])  and r['s1']  > S1_THR     # charge-1 area law -> confined at ANY kappa
-    if s1conf:   return 0     # Confined (incl. deep-Z_q-confined; connects to kappa=inf)
-    matter = np.isfinite(r['cos']) and r['cos'] > COS_THR    # on the deconfined side: matter condensed?
-    if matter:   return 2     # Higgs (charge-1 free + matter condensed)
-    return 1                  # Coulomb (charge-1 free + matter disordered)
+# --- FOLD IN the reliable L_s=20 m_gamma verdict on the deconfined side (the RESOLVED Coulomb wedge) ---
+# On the deconfined (charge-1 free) side, the photon mass is the TRUE Coulomb/Higgs discriminant (<cos> is a
+# q-blind crossover that cannot see the wedge). The L_s=20 run (scripts/u1f_wedge20.py) resolved m_gamma there
+# via the R(p)-shell ratio: massless->Coulomb (the wedge), massive->Higgs. Prefer it wherever available.
+import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import u1f_wedge20 as w20
+W20 = {}    # (q, beta, kappa) -> "massless" | "massive" | "amb"
+for (q, b, k), rr in w20.load(("u1f_wedge20", "u1f_wedge20_lenore")).items():
+    W20[(q, round(b, 2), round(k, 2))] = w20.state(rr)[0]
+print(f"# folded L_s=20 m_gamma verdicts: {len(W20)} points "
+      f"(massless={sum(v=='massless' for v in W20.values())} massive={sum(v=='massive' for v in W20.values())})")
 
-def wedge_candidate(r):
-    # inside the Higgs, charge-1 free, photon CONFIDENTLY massless -> tentative Coulomb-wedge cell (m_gamma noisy!)
-    return (cls(r) == 2 and np.isfinite(r['s1']) and r['s1'] < S1_THR
-            and np.isfinite(r['m2']) and 0.0 <= r['m2'] <= M2_THR)
+# NEAR-WALL only: m_gamma DISCRIMINATES Coulomb/Higgs only where a Higgs mass would be RESOLVABLE -- i.e. near
+# the confinement wall (beta<=BETA_W20). At weaker coupling (beta>=2) the lattice spacing is fine, so even a real
+# Higgs mass m^2*a^2 sits BELOW the L_s=20 floor and reads false-massless for EVERY q (not informative) -> there
+# we fall back to <cos>. The wedge is a near-wall phenomenon (intermediate Coulomb just past Confined) anyway.
+BETA_W20 = 1.6
+def w20_verdict(r):
+    if r['b'] > BETA_W20: return None                          # weak coupling: m_gamma sub-floor, don't trust
+    return W20.get((r['q'], round(r['b'], 2), round(r['k'], 2)))
+
+# 0 Confined, 1 Coulomb, 2 Higgs. CONFINEMENT (sigma_1) DECIDES FIRST (connects kappa=0->inf, boundary ->
+# pure-Z_q beta_c). On the DECONFINED side, split Coulomb/Higgs by the RESOLVED near-wall L_s=20 m_gamma
+# (massless=Coulomb wedge, massive=Higgs); else fall back to the <cos> matter crossover.
+def cls(r):
+    s1conf = np.isfinite(r['s1']) and r['s1'] > S1_THR        # charge-1 area law -> confined at ANY kappa
+    if s1conf:   return 0     # Confined (incl. deep-Z_q-confined; connects to kappa=inf)
+    v = w20_verdict(r)
+    if v == "massless": return 1     # Coulomb -- RESOLVED (the q>=5 wedge intrudes into matter-condensed region)
+    if v == "massive":  return 2     # Higgs -- RESOLVED massive photon
+    matter = np.isfinite(r['cos']) and r['cos'] > COS_THR     # fallback: <cos> matter crossover
+    return 2 if matter else 1
+
+def has_w20(r):  # cell whose Coulomb/Higgs label came from the (near-wall) L_s=20 m_gamma
+    return w20_verdict(r) in ("massless", "massive")
 
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -120,19 +137,19 @@ for ax, q in zip(axes.flat, qs):
     COSm = np.where(S1g <= S1_THR, COSg, np.nan)
     try: ax.contour(B, K, COSm, levels=[COS_THR], colors="k", linewidths=1.8, linestyles="--")
     except Exception: pass
-    # tentative wedge candidates (m_gamma-massless inside Higgs) -- m_gamma noisy at L_s=16
-    wx = [r['b'] for r in pts if wedge_candidate(r)]; wy = [r['k'] for r in pts if wedge_candidate(r)]
-    if wx: ax.plot(wx, wy, "o", mfc="none", mec="cyan", mew=1.8, ms=11, zorder=20)
+    # mark cells whose Coulomb/Higgs label is RESOLVED by L_s=20 m_gamma (vs the <cos> fallback)
+    wx = [r['b'] for r in pts if has_w20(r)]; wy = [r['k'] for r in pts if has_w20(r)]
+    if wx: ax.plot(wx, wy, ".", color="k", ms=4, alpha=0.55, zorder=20)
     ax.set_xlabel(r"$\beta$"); ax.set_ylabel(r"$\kappa$"); ax.set_title(f"q = {q}")
     ax.set_xlim(min(bs), max(bs)); ax.set_ylim(min(ks), max(ks))
 fig.legend(handles=[Patch(facecolor=cmap(i), label=labels[i]) for i in range(3)] +
            [plt.Line2D([0],[0], color="k", lw=2.2, label=r"confinement line $\sigma_1$=%.2f (sharp)" % S1_THR),
             plt.Line2D([0],[0], color="k", lw=1.8, ls="--", label=r"Higgs onset $\langle\cos\rangle$=%.1f (crossover)" % COS_THR),
-            plt.Line2D([0],[0], marker="o", mfc="none", mec="cyan", mew=1.8, ms=10, ls="",
-                       label=r"wedge candidate (m$_\gamma\!\approx$0 in Higgs; tentative @L$_s$=16)")],
+            plt.Line2D([0],[0], marker=".", color="k", ms=8, ls="", alpha=0.55,
+                       label=r"Coulomb/Higgs set by L$_s$=20 m$_\gamma$ (resolved wedge)")],
            loc="lower center", ncol=3, fontsize=9)
-fig.suptitle("U(1)+charge-q Higgs (frozen, 16$^3\\times$8): Confined ($\\sigma_1$ area law) connects $\\kappa$=0$\\to\\infty$, boundary $\\to$ pure-Z$_q$ $\\beta_c$",
-             fontsize=13)
+fig.suptitle("U(1)+charge-q Higgs (frozen): Confined ($\\sigma_1$, connects $\\kappa$=0$\\to\\infty$) | Coulomb | Higgs -- deconfined split by L$_s$=20 m$_\\gamma$ (q$\\geq$5 wedge)",
+             fontsize=12)
 fig.tight_layout(rect=[0, 0.06, 1, 0.96])
 os.makedirs("u1f_campaign_analysis", exist_ok=True)
 p = "u1f_campaign_analysis/phase3_gauge.png"; fig.savefig(p, dpi=120); print("\nwrote", p)
