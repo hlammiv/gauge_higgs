@@ -303,6 +303,68 @@ int mode_zq(int argc, char** argv) {
   return 0;
 }
 
+// Static potential V(R) from the FULL charge-1 Wilson-loop grid W[R][T] (1<=R,T<=Rmax) on an isotropic L^4.
+// The shape of V(R) is the position-space Coulomb/Higgs discriminant (Coulomb: -alpha/R massless; Higgs:
+// V_inf - alpha*exp(-m R)/R screened/Yukawa), an INDEPENDENT cross-check of the structure-factor m_gamma.
+// Emits W[R][T] +- jackknife err; V(R) and the Coulomb-vs-Yukawa fit are done offline (scripts/u1f_vr.py).
+int mode_pot(int argc, char** argv) {
+  auto af = [&](int i, double d){ return i < argc ? std::atof(argv[i]) : d; };
+  auto ai = [&](int i, long d){ return i < argc ? std::atol(argv[i]) : d; };
+  const int L = (int)ai(2, 16);
+  const double beta = af(3, 1.0), kappa = af(4, 0.0);
+  const int q = (int)ai(5, 2);
+  const int Rmax = (int)ai(6, L / 2);
+  const long nsweep = ai(7, 3000), ntherm = ai(8, 1500);
+  const int meas_every = (int)ai(9, 5);
+  const std::uint64_t seed = (std::uint64_t)ai(10, 7);
+  const int n_or = (int)ai(11, 3);
+
+  U1Frozen<kDim> s(ext(L), seed);
+  s.beta = beta; s.kappa = kappa; s.q = q; s.n_or = n_or; s.hot(0.8);
+  s.thermalize((int)ntherm);
+
+  const int RT = Rmax + 1;
+  std::vector<std::vector<Real>> perW;     // per-config flattened charge-1 grid (R*RT+T)
+  double mP = 0, mL = 0, mRho = 0, mP1 = 0; long nm = 0;
+  for (long i = 0; i < nsweep; ++i) {
+    s.sweep();
+    if (i % meas_every == 0) {
+      WGrid g1(RT, std::vector<Real>(RT, 0.0)), gq(RT, std::vector<Real>(RT, 0.0));
+      wilson_grids<kDim>(s.th, s.lat, q, Rmax, g1, gq);
+      std::vector<Real> flat(static_cast<std::size_t>(RT) * RT, 0.0);
+      for (int R = 1; R <= Rmax; ++R) for (int T = 1; T <= Rmax; ++T) flat[R * RT + T] = g1[R][T];
+      perW.push_back(std::move(flat));
+      mP += s.avg_plaq(); mL += s.link_energy(); mRho += monopole_density<kDim>(s.th, s.lat);
+      mP1 += polyakov_abs<kDim>(s.th, s.lat, 1);
+      ++nm;
+    }
+  }
+  const std::size_t N = perW.size(), NF = static_cast<std::size_t>(RT) * RT;
+  const int ng = (int)std::min<std::size_t>(8, N);
+  std::vector<Real> mean(NF, 0.0);
+  for (auto& w : perW) for (std::size_t k = 0; k < NF; ++k) mean[k] += w[k];
+  for (auto& m : mean) m /= (Real)N;
+  std::vector<Real> jerr(NF, 0.0);
+  if (ng >= 2) {
+    std::vector<std::vector<Real>> gsum(ng, std::vector<Real>(NF, 0.0));
+    std::vector<long> gcnt(ng, 0);
+    for (std::size_t c = 0; c < N; ++c) { int g = (int)(c * ng / N); for (std::size_t k = 0; k < NF; ++k) gsum[g][k] += perW[c][k]; gcnt[g]++; }
+    for (std::size_t k = 0; k < NF; ++k) {
+      double tot = 0, totc = 0; for (int g = 0; g < ng; ++g) { tot += gsum[g][k]; totc += gcnt[g]; }
+      double jm = 0; std::vector<double> vals(ng);
+      for (int g = 0; g < ng; ++g) { vals[g] = (tot - gsum[g][k]) / (totc - gcnt[g]); jm += vals[g]; }
+      jm /= ng; double var = 0; for (int g = 0; g < ng; ++g) var += (vals[g] - jm) * (vals[g] - jm);
+      jerr[k] = std::sqrt(var * (ng - 1) / (double)ng);
+    }
+  }
+  std::printf("# u1_frozen pot: L=%d beta=%g kappa=%g q=%d Rmax=%d nmeas=%zu ngroups=%d\n", L, beta, kappa, q, Rmax, N, ng);
+  std::printf("# <plaq>=%.5f  <cos>_link=%.5f  rho_M=%.5f  |P1|=%.5f\n", mP / nm, mL / nm, mRho / nm, mP1 / nm);
+  for (int R = 1; R <= Rmax; ++R)
+    for (int T = 1; T <= Rmax; ++T)
+      std::printf("# W R=%d T=%d  W=%.6e +- %.3e\n", R, T, mean[R * RT + T], jerr[R * RT + T]);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -315,8 +377,9 @@ int main(int argc, char** argv) {
       "  %s muca  <L> <beta> <kappa> <q> <Bmin> <Bmax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
       "  %s mucaA <L> <beta> <kappa> <q> <Amin> <Amax> <nbin> [maxsweep ntherm seed n_or outbase]\n"
       "  %s pm    <Ls> <Lt> <beta> <kappa> <q> [nsweep ntherm meas_every seed n_or]   (m_gamma; Ls>=16)\n"
+      "  %s pot   <L> <beta> <kappa> <q> <Rmax> [nsweep ntherm meas_every seed n_or]  (static potential V(R))\n"
       "  %s zq    <L> <beta> <q> [nsweep ntherm seed]   (pure Z_q gauge; kappa->inf matching target)\n",
-      argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
+      argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
     return 1;
   }
   if (!std::strcmp(argv[1], "point")) return mode_point(argc, argv);
@@ -324,7 +387,8 @@ int main(int argc, char** argv) {
   if (!std::strcmp(argv[1], "muca"))  return mode_muca(argc, argv);
   if (!std::strcmp(argv[1], "mucaA")) return mode_mucaA(argc, argv);
   if (!std::strcmp(argv[1], "pm"))    return mode_pm(argc, argv);
+  if (!std::strcmp(argv[1], "pot"))   return mode_pot(argc, argv);
   if (!std::strcmp(argv[1], "zq"))    return mode_zq(argc, argv);
-  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA|pm|zq)\n", argv[1]);
+  std::fprintf(stderr, "unknown mode '%s' (use point|hyst|muca|mucaA|pm|pot|zq)\n", argv[1]);
   return 1;
 }
