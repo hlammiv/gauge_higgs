@@ -53,41 +53,45 @@ for (lbl, b, k) in [("CONFINED  beta=0.4 k=0", 0.4, 0.0), ("COULOMB   beta=2.5 k
         r = corner(q, b, k)
         if r: print(f"  q={q} {lbl}:  rho_M={r['rho']:8.2f}  m2={r['m2']:+.4f}+-{r['m2e']:.4f}  s1={r['s1']:.3f}  |P1|={r['P1']:.3f}")
 
-# Textbook FS classification by Wilson-loop CHARGE CONTENT + photon mass (rho_M NOT used -- it leaks into
-# the deep-Higgs-Z_q corner because charge-1 is confined there by the residual Z_q).
-#   sigma_q (charge-q, the dynamical matter charge): area-law -> charge-q CONFINED.  Creutz chi is nan or
-#       negative or large when the loop is deeply confined; small & non-negative when screened.
-#   sigma_1 (charge-1): area-law -> charge-1 CONFINED (genuine Confined, OR residual-Z_q inside the Higgs).
-#   m_gamma=0 (m2<=thr): massless photon -- only in a genuine Coulomb phase (all charges free + gapless).
-M2_THR = 0.013        # massless cut (~2x median R-fit error)
-S1_THR = 0.15         # charge-1 area-law cut (deconf sigma_1 ~ 0-0.07; conf ~ 0.3-1.6)
-SQ_THR = 0.20         # charge-q area-law cut (screened ~ 0-0.13; conf = nan/neg/large)
-print(f"\n# thresholds: m2<= {M2_THR} massless ; sigma_1> {S1_THR} charge-1 conf ; |sigma_q|> {SQ_THR} (or nan) charge-q conf")
+# TWO-AXIS classification (the validated SU(2) recipe) on the ROBUST channels:
+#   GAUGE axis  = sigma_1 (charge-1 Wilson string tension). SHARP. Locates confinement: at kappa=0 it drops
+#                 across beta~1.0 = the pure-gauge confinement->Coulomb transition (beta_c~1.01). A genuine
+#                 gauge observable. (sigma_q, the charge-q Creutz ratio, is NOISE at these loop sizes -- nan or
+#                 garbage-NEGATIVE even in the deconfined Coulomb phase -- so it was wrong to use it; doing so
+#                 ate the entire kappa=0 Coulomb phase. sigma_1 is clean.)
+#   MATTER axis = <cos>_link. CROSSOVER (Elitzur: the Higgs has NO local gauge order parameter). =0 at kappa=0
+#                 (matter decoupled), rises monotonically; q-BLIND (condenses at the same kappa for all q).
+# Phases:
+#   Higgs    : matter condensed (<cos> high) -- regardless of whether residual Z_q still confines charge-1.
+#   Confined : matter disordered AND charge-1 confined (sigma_1 high).
+#   Coulomb  : matter disordered AND charge-1 free (sigma_1 low). At kappa=0 this is the large-beta photon.
+# NOTE: this 2-axis map CANNOT see the q>=5 Coulomb WEDGE -- the wedge is Coulomb persisting INSIDE the
+# matter-condensed region, and <cos> is q-blind (condenses identically for all q). Only m_gamma can see it,
+# and m_gamma is unreliable at L_s=16 (degenerate R-fits). We OVERLAY m_gamma-massless cells as tentative
+# wedge candidates, but the wedge needs the dedicated L_s>=20 m_gamma run.
+S1_THR  = 0.15        # charge-1 area-law cut (deconf sigma_1 ~ 0-0.09; conf ~ 0.35-1.6) -- sharp
+COS_THR = 0.50        # matter-condensation (Higgs) crossover; soft (Elitzur), threshold-dependent
+M2_THR  = 0.013       # massless cut for the tentative wedge overlay (~2x median R-fit error)
+print(f"\n# thresholds: sigma_1> {S1_THR} charge-1 CONFINED (sharp) ; <cos>> {COS_THR} matter CONDENSED (crossover)")
 
-# 0 Confined, 1 Coulomb, 2 Higgs, 3 deconfined-but-m_gamma-UNRESOLVED (honest: L_s=16 floor)
-# m_gamma at L_s=16 is unreliable (degenerate R-fits -> negative m^2, false +-0.000, +-88 blowups). So in the
-# both-charges-screened region we ONLY split Coulomb/Higgs where m^2 is CLEAN: a confident massless (m2<=thr
-# AND not an outlier) -> Coulomb; a confident, significant, sane massive (m2>MASS_HI, |m2|<2, m2>3*err) -> Higgs;
-# everything else -> "unresolved" (the wedge needs L_s>=20 + better stats, not a guess).
-MASS_HI = 0.06
+# 0 Confined, 1 Coulomb, 2 Higgs
 def cls(r):
-    sq, s1, m2, e = r['sq'], r['s1'], r['m2'], r['m2e']
-    sq_conf = (not np.isfinite(sq)) or abs(sq) > SQ_THR      # charge-q area law -> Confined
-    s1_conf = (np.isfinite(s1) and s1 > S1_THR)             # charge-1 area law (residual Z_q inside Higgs)
-    if sq_conf:                       return 0   # charge-q confined  -> Confined (strong coupling)
-    if s1_conf:                       return 2   # charge-q screened, charge-1 Z_q-confined -> deep-Higgs (Higgs)
-    # both charges screened: clean Coulomb/Higgs only where m_gamma is trustworthy
-    if not np.isfinite(m2) or abs(m2) > 2.0:        return 3   # fit blowup -> unresolved
-    if 0.0 <= m2 <= M2_THR:                          return 1   # clean massless -> Coulomb
-    if m2 > MASS_HI and m2 > 3.0 * max(e, 1e-6):     return 2   # clean, significant massive -> Higgs
-    return 3                                                    # marginal / negative-noise -> unresolved
+    matter = np.isfinite(r['cos']) and r['cos'] > COS_THR    # Higgs: matter condensed
+    s1conf = np.isfinite(r['s1'])  and r['s1']  > S1_THR     # charge-1 confined (sharp gauge axis)
+    if matter:   return 2     # Higgs (matter condensed)
+    if s1conf:   return 0     # Confined (charge-1 confined, matter disordered)
+    return 1                  # Coulomb (charge-1 free, matter disordered)
+
+def wedge_candidate(r):
+    # inside the Higgs, charge-1 free, photon CONFIDENTLY massless -> tentative Coulomb-wedge cell (m_gamma noisy!)
+    return (cls(r) == 2 and np.isfinite(r['s1']) and r['s1'] < S1_THR
+            and np.isfinite(r['m2']) and 0.0 <= r['m2'] <= M2_THR)
 
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
-cmap = ListedColormap(["#c0392b", "#2b6cb0", "#27ae60", "#bfbfbf"])   # Confined, Coulomb, Higgs, unresolved
-labels = ["Confined (charge-q area law)", "Coulomb (m$_\\gamma$=0)", "Higgs (charge-q screened)",
-          "deconf., m$_\\gamma$ unresolved @ L$_s$=16"]
+cmap = ListedColormap(["#c0392b", "#2b6cb0", "#27ae60"])   # Confined, Coulomb, Higgs
+labels = ["Confined", "Coulomb (m$_\\gamma$=0)", "Higgs (matter condensed)"]
 
 qs = [2, 3, 4, 5, 6, 8]
 fig, axes = plt.subplots(2, 3, figsize=(15, 9))
@@ -96,27 +100,43 @@ for ax, q in zip(axes.flat, qs):
     if len(pts) < 6: ax.set_title(f"q={q} (no data)"); continue
     bs = sorted(set(r['b'] for r in pts)); ks = sorted(set(r['k'] for r in pts))
     PH = np.full((len(ks), len(bs)), np.nan)
-    M2g = np.full((len(ks), len(bs)), np.nan)
+    S1g = np.full((len(ks), len(bs)), np.nan); COSg = np.full((len(ks), len(bs)), np.nan)
     for r in pts:
         i, j = ks.index(r['k']), bs.index(r['b'])
-        PH[i, j] = cls(r); M2g[i, j] = r['m2']
+        PH[i, j] = cls(r); S1g[i, j] = r['s1']; COSg[i, j] = r['cos']
     B, K = np.meshgrid(bs, ks)
-    ax.pcolormesh(B, K, PH, cmap=cmap, vmin=-0.5, vmax=3.5, shading="nearest", alpha=0.9)
+    ax.pcolormesh(B, K, PH, cmap=cmap, vmin=-0.5, vmax=2.5, shading="nearest", alpha=0.85)
+    # SHARP confinement line: sigma_1 = S1_THR (the genuine gauge observable -- locates beta_c at kappa=0)
+    try: ax.contour(B, K, S1g, levels=[S1_THR], colors="k", linewidths=2.2)
+    except Exception: pass
+    # SOFT Higgs onset: <cos> = COS_THR (Elitzur crossover -- dashed to flag it is not a sharp transition)
+    try: ax.contour(B, K, COSg, levels=[COS_THR], colors="k", linewidths=1.8, linestyles="--")
+    except Exception: pass
+    # tentative wedge candidates (m_gamma-massless inside Higgs) -- m_gamma noisy at L_s=16
+    wx = [r['b'] for r in pts if wedge_candidate(r)]; wy = [r['k'] for r in pts if wedge_candidate(r)]
+    if wx: ax.plot(wx, wy, "o", mfc="none", mec="cyan", mew=1.8, ms=11, zorder=20)
     ax.set_xlabel(r"$\beta$"); ax.set_ylabel(r"$\kappa$"); ax.set_title(f"q = {q}")
     ax.set_xlim(min(bs), max(bs)); ax.set_ylim(min(ks), max(ks))
-fig.legend(handles=[Patch(facecolor=cmap(i), label=labels[i]) for i in range(4)],
-           loc="lower center", ncol=4, fontsize=9)
-fig.suptitle("U(1)+charge-q Higgs phase diagram (frozen, GAUGE-classified, 16$^3\\times$8) -- m$_\\gamma$ puts the Coulomb region on the map",
+fig.legend(handles=[Patch(facecolor=cmap(i), label=labels[i]) for i in range(3)] +
+           [plt.Line2D([0],[0], color="k", lw=2.2, label=r"confinement line $\sigma_1$=%.2f (sharp)" % S1_THR),
+            plt.Line2D([0],[0], color="k", lw=1.8, ls="--", label=r"Higgs onset $\langle\cos\rangle$=%.1f (crossover)" % COS_THR),
+            plt.Line2D([0],[0], marker="o", mfc="none", mec="cyan", mew=1.8, ms=10, ls="",
+                       label=r"wedge candidate (m$_\gamma\!\approx$0 in Higgs; tentative @L$_s$=16)")],
+           loc="lower center", ncol=3, fontsize=9)
+fig.suptitle("U(1)+charge-q Higgs (frozen, 16$^3\\times$8): $\\sigma_1$ confinement axis (sharp) $\\times$ $\\langle\\cos\\rangle$ matter axis (crossover)",
              fontsize=13)
-fig.tight_layout(rect=[0, 0.05, 1, 0.96])
+fig.tight_layout(rect=[0, 0.06, 1, 0.96])
 os.makedirs("u1f_campaign_analysis", exist_ok=True)
 p = "u1f_campaign_analysis/phase3_gauge.png"; fig.savefig(p, dpi=120); print("\nwrote", p)
 
-# ---- per-q phase census + Coulomb-at-large-kappa (the wedge) ----
-print("\n## phase census + massless fraction at kappa>=1.5 (the q>=5 Coulomb wedge):")
+# ---- per-q phase census + kappa=0 sanity row + wedge-candidate count ----
+print("\n## phase census (kappa=0 must show BOTH Confined and Coulomb):")
 for q in qs:
     pts = [r for r in recs if r['q'] == q]
     if not pts: continue
-    n = [0,0,0,0]
+    n = [0,0,0]
     for r in pts: n[cls(r)] += 1
-    print(f"  q={q}: Confined={n[0]:2d} Coulomb={n[1]:2d} Higgs={n[2]:2d} Unresolved={n[3]:2d}")
+    row0 = sorted([r for r in pts if abs(r['k']) < 1e-6], key=lambda r: r['b'])
+    seq = "".join("CcH"[cls(r)] for r in row0)   # kappa=0 row, low->high beta
+    nw = sum(1 for r in pts if wedge_candidate(r))
+    print(f"  q={q}: Confined={n[0]:2d} Coulomb={n[1]:2d} Higgs={n[2]:2d} | kappa=0 row(lo->hi beta)='{seq}' | wedge-cand={nw}")
