@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""MASTER full-plane phase3 (per q) -- stitches two datasets, each authoritative where it is best:
+  * Tier A point mesh (L=12, beta 0.85-1.45, kappa 0-0.9): the CONFINED wall + triple point + kappa=0 axis,
+    classified by sigma_1 (charge-1 string tension) x <cos>_link (matter). [cheap, dense, reaches kappa=0]
+  * Combined pm+V(R) grid (L_s=20, beta 1.1-2.5, kappa>=0.6): the DECONFINED Coulomb/Higgs/wedge, classified
+    by sigma_1 x V(R) alpha (the robust same-config discriminant; m_gamma unreliable on the deconfined side).
+Overlap (beta 1.1-1.45, kappa 0.6-0.9): the combined layer is drawn on top (it has V(R)). kappa capped at 2.5
+for the headline (the wedge kappa->inf asymptote is a separate figure). Different L per region (locating phases,
+not scaling -- sigma_1 is L-stable); provenance labeled."""
+import glob, re
+import numpy as np
+
+H_PT = re.compile(r"point: D=\d+ L=(\d+) beta=([\d.]+) kappa=([\d.]+) q=(\d+)")
+H_PM = re.compile(r"pm: Ls=(\d+) Lt=(\d+) beta=([\d.]+) kappa=([\d.]+) q=(\d+)")
+COS  = re.compile(r"<cos>_link=([\-\d.eE]+)")
+SG1  = re.compile(r"sigma1=([\-\d.eEna]+)")
+WL   = re.compile(r"W R=(\d+) T=(\d+)\s+W=([\d.eE+\-]+)\s+\+-\s+([\d.eE+\-]+)")
+def f(x):
+    try: return float(x)
+    except: return float('nan')
+
+import sys; sys.path.insert(0, 'scripts'); import u1f_vr as vr
+S1_THR, COS_THR, ALPHA_THR = 0.15, 0.50, 0.03
+
+# --- Tier A (confined/triple-point/kappa=0): sigma_1 x <cos> ---
+tierA = {}
+for d in ("u1f_fg_lenore", "u1f_fg"):
+    for fn in glob.glob(d + "/job_point_*.out"):
+        t = open(fn).read(); h = H_PT.search(t)
+        if not h or "# DONE" not in t: continue
+        s, c = SG1.search(t), COS.search(t)
+        tierA[(int(h[4]), float(h[2]), float(h[3]))] = (f(s[1]) if s else np.nan, f(c[1]) if c else np.nan)
+# --- Combined (deconfined Coulomb/Higgs): sigma_1 x V(R) alpha ---
+comb = {}
+for fn in glob.glob("u1f_fg/job_pm_*.out"):
+    t = open(fn).read(); h = H_PM.search(t)
+    if not h or "# DONE" not in t: continue
+    s = SG1.search(t)
+    W = {(int(R), int(T)): (float(w), float(e)) for R, T, w, e in WL.findall(t)}
+    Rs, VR, VRe = vr.V_of_R(W, max((R for (R, _T) in W), default=0)); ff = vr.fit(Rs, VR, VRe)
+    comb[(int(h[5]), float(h[3]), float(h[4]))] = (f(s[1]) if s else np.nan,
+                                                   ff['alpha'] if ff else np.nan)
+# --- L_s=16 base (coarse full-plane backbone; fills the gaps between Tier A and combined): sigma_1 x <cos> ---
+base = {}
+for d in ("u1f_gauge", "u1f_gauge_lenore"):
+    for fn in glob.glob(d + "/*.out"):
+        t = open(fn).read(); h = H_PM.search(t)
+        if not h: continue
+        s, c = SG1.search(t), COS.search(t)
+        if not s: continue
+        base[(int(h[5]), float(h[3]), float(h[4]))] = (f(s[1]), f(c[1]) if c else np.nan)
+print(f"# base(L_s=16) cells: {len(base)}   Tier A cells: {len(tierA)}   combined cells: {len(comb)}")
+
+def cls_A(s1, cos):
+    if np.isfinite(s1) and s1 > S1_THR: return 0
+    return 2 if (np.isfinite(cos) and cos > COS_THR) else 1
+def cls_C(s1, a):
+    if np.isfinite(s1) and s1 > S1_THR: return 0
+    return 1 if (np.isfinite(a) and a > ALPHA_THR) else 2
+
+import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+from matplotlib.patches import Patch
+cmap = ListedColormap(["#c0392b", "#2b6cb0", "#27ae60"])
+TRIPLE = {2: (0.95, 0.37), 3: (0.98, 0.50), 4: (1.045, 0.585), 5: (1.047, 0.59), 6: (1.048, 0.59), 8: (1.047, 0.59)}
+KMAX = 2.5
+qs = [2, 3, 4, 5, 6, 8]
+fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+def layer(ax, cells, clsfn, q):
+    pts = [(b, k, v) for (qq, b, k), v in cells.items() if qq == q and k <= KMAX + 1e-9]
+    if not pts: return
+    bs = sorted(set(b for b, k, v in pts)); ks = sorted(set(k for b, k, v in pts))
+    PH = np.full((len(ks), len(bs)), np.nan)
+    for b, k, v in pts: PH[ks.index(k), bs.index(b)] = clsfn(*v)
+    B, K = np.meshgrid(bs, ks)
+    ax.pcolormesh(B, K, np.ma.masked_invalid(PH), cmap=cmap, vmin=-0.5, vmax=2.5, shading="nearest")
+for ax, q in zip(axes.flat, qs):
+    layer(ax, base, cls_A, q)         # coarse full-plane backbone (drawn first, fills gaps)
+    layer(ax, tierA, cls_A, q)        # fine confined/triple-point/kappa=0 region
+    layer(ax, comb, cls_C, q)         # fine deconfined Coulomb/Higgs/wedge on top
+    if q in TRIPLE:
+        ax.plot(*TRIPLE[q], "*", color="gold", ms=20, mec="k", mew=1.0, zorder=20)
+    ax.set_xlabel(r"$\beta$"); ax.set_ylabel(r"$\kappa$"); ax.set_title(f"q = {q}")
+    ax.set_xlim(0.4, 2.5); ax.set_ylim(0, KMAX)
+fig.legend(handles=[Patch(facecolor=cmap(i), label=l) for i, l in enumerate(["Confined", "Coulomb", "Higgs"])] +
+           [plt.Line2D([0], [0], marker="*", color="gold", mec="k", ms=15, ls="", label="triple point"),
+            Patch(facecolor="0.85", label="layers: L_s=16 base backbone + Tier A (κ→0, σ₁×⟨cos⟩) + combined (deconf, σ₁×V(R)α)")],
+           loc="lower center", ncol=5, fontsize=9)
+fig.suptitle("U(1)+charge-q Higgs MASTER phase diagram (frozen): Confined / Coulomb / Higgs, full plane\n"
+             "confined wall+triple point from Tier A (κ→0) stitched with the combined-grid Coulomb wedge (deconfined)",
+             fontsize=12)
+fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+import os; os.makedirs("u1f_campaign_analysis", exist_ok=True)
+p = "u1f_campaign_analysis/phase3_master.png"; fig.savefig(p, dpi=130); print("wrote", p)
