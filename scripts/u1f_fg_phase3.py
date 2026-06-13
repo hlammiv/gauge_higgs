@@ -52,8 +52,8 @@ fig.legend(handles=[Patch(facecolor=cmap(i), label=l) for i, l in enumerate(
            ["Confined (σ₁>0.15)", "Coulomb (V(R) α>0.03)", "Higgs (screened)"])] +
            [Patch(facecolor="white", edgecolor="0.7", label="not yet run")],
            loc="lower center", ncol=4, fontsize=10)
-fig.suptitle("PRELIMINARY phase3 from the combined pm+V(R) fine grid (u1f_fg, INCOMPLETE -- κ-refine in flight)",
-             fontsize=13)
+fig.suptitle("Phase3 from the combined pm+V(R) fine grid (u1f_fg): deconfined region, V(R)-α Coulomb/Higgs split "
+             "(q≥4 complete κ=0.6–2.5; q2,3 outer-β unrun)", fontsize=12)
 fig.tight_layout(rect=[0, 0.05, 1, 0.96])
 import os; os.makedirs("u1f_campaign_analysis", exist_ok=True)
 p = "u1f_campaign_analysis/phase3_fg_prelim.png"; fig.savefig(p, dpi=120); print("wrote", p)
