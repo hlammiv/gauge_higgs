@@ -32,14 +32,16 @@ for d in ("u1f_fg_lenore", "u1f_fg"):
         tierA[(int(h[4]), float(h[2]), float(h[3]))] = (f(s[1]) if s else np.nan, f(c[1]) if c else np.nan)
 # --- Combined (deconfined Coulomb/Higgs): sigma_1 x V(R) alpha ---
 comb = {}
+alpha = {}   # (q,beta,kappa) -> V(R) Coulomb coeff (combined grid only) -- for the WEDGE overlay
 for fn in glob.glob("u1f_fg/job_pm_*.out"):
     t = open(fn).read(); h = H_PM.search(t)
     if not h or "# DONE" not in t: continue
-    s = SG1.search(t)
+    s, c = SG1.search(t), COS.search(t)
     W = {(int(R), int(T)): (float(w), float(e)) for R, T, w, e in WL.findall(t)}
     Rs, VR, VRe = vr.V_of_R(W, max((R for (R, _T) in W), default=0)); ff = vr.fit(Rs, VR, VRe)
-    comb[(int(h[5]), float(h[3]), float(h[4]))] = (f(s[1]) if s else np.nan,
-                                                   ff['alpha'] if ff else np.nan)
+    key = (int(h[5]), float(h[3]), float(h[4]))
+    comb[key] = (f(s[1]) if s else np.nan, f(c[1]) if c else np.nan)   # (sigma_1, <cos>) -> same classifier
+    alpha[key] = ff['alpha'] if ff else np.nan
 # --- L_s=16 base (coarse full-plane backbone; fills the gaps between Tier A and combined): sigma_1 x <cos> ---
 base = {}
 for d in ("u1f_gauge", "u1f_gauge_lenore"):
@@ -51,12 +53,11 @@ for d in ("u1f_gauge", "u1f_gauge_lenore"):
         base[(int(h[5]), float(h[3]), float(h[4]))] = (f(s[1]), f(c[1]) if c else np.nan)
 print(f"# base(L_s=16) cells: {len(base)}   Tier A cells: {len(tierA)}   combined cells: {len(comb)}")
 
-def cls_A(s1, cos):
-    if np.isfinite(s1) and s1 > S1_THR: return 0
-    return 2 if (np.isfinite(cos) and cos > COS_THR) else 1
-def cls_C(s1, a):
-    if np.isfinite(s1) and s1 > S1_THR: return 0
-    return 1 if (np.isfinite(a) and a > ALPHA_THR) else 2
+# CONSISTENT 3-phase classifier EVERYWHERE: sigma_1 (confinement) x <cos> (matter). Monotonic, q-blind matter
+# axis -> every q has a Higgs at large kappa. (Earlier V(R)-alpha-primary scheme made the wedge eat the Higgs.)
+def cls(s1, cos):
+    if np.isfinite(s1) and s1 > S1_THR: return 0          # Confined (incl. deep-Z_q-confined)
+    return 2 if (np.isfinite(cos) and cos > COS_THR) else 1  # Higgs (matter condensed) / Coulomb (disordered)
 
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -66,28 +67,38 @@ TRIPLE = {2: (0.95, 0.37), 3: (0.98, 0.50), 4: (1.045, 0.585), 5: (1.047, 0.59),
 KMAX = 2.5
 qs = [2, 3, 4, 5, 6, 8]
 fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-def layer(ax, cells, clsfn, q):
+def layer(ax, cells, q):
     pts = [(b, k, v) for (qq, b, k), v in cells.items() if qq == q and k <= KMAX + 1e-9]
     if not pts: return
     bs = sorted(set(b for b, k, v in pts)); ks = sorted(set(k for b, k, v in pts))
     PH = np.full((len(ks), len(bs)), np.nan)
-    for b, k, v in pts: PH[ks.index(k), bs.index(b)] = clsfn(*v)
+    for b, k, v in pts: PH[ks.index(k), bs.index(b)] = cls(*v)
     B, K = np.meshgrid(bs, ks)
     ax.pcolormesh(B, K, np.ma.masked_invalid(PH), cmap=cmap, vmin=-0.5, vmax=2.5, shading="nearest")
 for ax, q in zip(axes.flat, qs):
-    layer(ax, base, cls_A, q)         # coarse full-plane backbone (drawn first, fills gaps)
-    layer(ax, tierA, cls_A, q)        # fine confined/triple-point/kappa=0 region
-    layer(ax, comb, cls_C, q)         # fine deconfined Coulomb/Higgs/wedge on top
+    layer(ax, base, q)                # coarse full-plane backbone (fills gaps)
+    layer(ax, tierA, q)               # fine confined wall / triple point / kappa=0
+    layer(ax, comb, q)                # fine deconfined (same sigma_1 x <cos> classifier -> monotonic, no seam)
+    # WEDGE overlay (#26): inside the Higgs (matter condensed) but photon LIGHT (V(R) alpha>0.03) -- q>=5 feature.
+    wx = [b for (qq, b, k) in alpha if qq == q and k <= KMAX + 1e-9
+          and (qq, b, k) in comb and cls(*comb[(qq, b, k)]) == 2
+          and np.isfinite(alpha[(qq, b, k)]) and alpha[(qq, b, k)] > ALPHA_THR]
+    wy = [k for (qq, b, k) in alpha if qq == q and k <= KMAX + 1e-9
+          and (qq, b, k) in comb and cls(*comb[(qq, b, k)]) == 2
+          and np.isfinite(alpha[(qq, b, k)]) and alpha[(qq, b, k)] > ALPHA_THR]
+    if wx: ax.scatter(wx, wy, s=70, facecolors="none", edgecolors="cyan", linewidths=1.6, zorder=18,
+                      marker="s", label="_wedge")
     if q in TRIPLE:
         ax.plot(*TRIPLE[q], "*", color="gold", ms=20, mec="k", mew=1.0, zorder=20)
     ax.set_xlabel(r"$\beta$"); ax.set_ylabel(r"$\kappa$"); ax.set_title(f"q = {q}")
     ax.set_xlim(0.4, 2.5); ax.set_ylim(0, KMAX)
 fig.legend(handles=[Patch(facecolor=cmap(i), label=l) for i, l in enumerate(["Confined", "Coulomb", "Higgs"])] +
            [plt.Line2D([0], [0], marker="*", color="gold", mec="k", ms=15, ls="", label="triple point"),
-            Patch(facecolor="0.85", label="layers: L_s=16 base backbone + Tier A (κ→0, σ₁×⟨cos⟩) + combined (deconf, σ₁×V(R)α)")],
+            plt.Line2D([0], [0], marker="s", mfc="none", mec="cyan", mew=1.6, ms=9, ls="",
+                       label="Coulomb WEDGE (in Higgs, V(R) photon light; q≥5)")],
            loc="lower center", ncol=5, fontsize=9)
-fig.suptitle("U(1)+charge-q Higgs MASTER phase diagram (frozen): Confined / Coulomb / Higgs, full plane\n"
-             "confined wall+triple point from Tier A (κ→0) stitched with the combined-grid Coulomb wedge (deconfined)",
+fig.suptitle("U(1)+charge-q Higgs MASTER phase diagram (frozen): Confined / Coulomb / Higgs (σ₁×⟨cos⟩, full plane)\n"
+             "every q has a Higgs at large κ; the intermediate-Coulomb WEDGE (q≥5) is the cyan-hatched sub-region inside it",
              fontsize=12)
 fig.tight_layout(rect=[0, 0.05, 1, 0.95])
 import os; os.makedirs("u1f_campaign_analysis", exist_ok=True)
