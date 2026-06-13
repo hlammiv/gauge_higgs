@@ -14,8 +14,8 @@
 set -u
 OUT="${OUT:-u1f_fg}"                       # same dir as the existing grid (cells merge)
 LEN_CORES="${LEN_CORES:-30}"; LUC_CORES="${LUC_CORES:-18}"
-QS="${QS:-2 3 4 5 6 8}"
-BETAS="${BETAS:-1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.2 2.5}"   # Delta=0.1 through transition + tail
+QS="${QS:-4 5 6 8}"                                                  # wedge-relevant q only (q=2,3 are flat Higgs)
+BETAS="${BETAS:-1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 2.0 2.2 2.5}"        # finer through transition + tail
 KAPS="${KAPS:-1.0 1.5 2.0 2.5 3.5 5.0 7.0}"                          # existing mid + extended high (asymptote)
 LS="${LS:-20}"; LT="${LT:-8}"; RMAX="${RMAX:-8}"; NS="${NS:-3000}"; NT="${NT:-1500}"; ME="${ME:-5}"
 mkdir -p "$OUT"
