@@ -6,6 +6,7 @@
 #include "hmc/gauge_higgs_hmc.hpp"
 #include "rep/rep_fundamental.hpp"
 #include "rep/rep_adjoint.hpp"
+#include "rep/rep_general.hpp"
 #include <random>
 
 using namespace gh;
@@ -171,6 +172,12 @@ int main() {
   test_link_force_fd<3, 2>(f2, 301, "SU(2) fund");
   test_link_force_fd<3, 2>(a2, 302, "SU(2) adj");
   test_link_force_fd<3, 3>(f3, 303, "SU(3) fund");
+  // GeneralRep (tensor-basis spin-j) link force = the SU(2)->discrete-H production path
+  // (2T spin-3 {6}, 2O spin-4 {8}, 2I spin-6 {12}); the matter-staple back-reaction uses
+  // D^(R)(U) for the tensor-basis rep, which Fundamental/Adjoint above do NOT exercise.
+  { GeneralRep<2> g6({6});  test_link_force_fd<3, 2>(g6,  305, "SU(2) GeneralRep spin-3 {6} (2T)"); }
+  { GeneralRep<2> g8({8});  test_link_force_fd<3, 2>(g8,  306, "SU(2) GeneralRep spin-4 {8} (2O)"); }
+  { GeneralRep<2> g12({12}); test_link_force_fd<3, 2>(g12, 307, "SU(2) GeneralRep spin-6 {12} (2I)"); }
   std::printf("-- combined reversibility --\n");
   test_combined_reversibility<3, 2>(f2, 401, "SU(2) fund");
   test_combined_reversibility<3, 2>(a2, 402, "SU(2) adj");

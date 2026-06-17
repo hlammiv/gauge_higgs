@@ -211,6 +211,12 @@ int main(int argc, char** argv) {
   { long nb = 1; for (int d = 0; d < kDim; ++d) nb *= Lext; nb *= kDim;   // n_bonds = vol*D
     std::printf("chi_link = %.6f   (V*Var(L_link), V=n_bonds=%ld ; Var=%.4e)\n",
                 static_cast<double>(nb) * Llink.var(), nb, Llink.var()); }
+  // Gauge susceptibility chi_plaq = V_plaq * Var(plaq): specific-heat peak at the gauge
+  // freezing/confinement transition (primary line finder). V_plaq = vol*D(D-1)/2 = the
+  // plaquette count (NOT n_bonds; the wrong V rescales the FSS peak HEIGHT, location is fine).
+  { long vol = 1; for (int d = 0; d < kDim; ++d) vol *= Lext; long Vpl = vol * kDim * (kDim - 1) / 2;
+    std::printf("chi_plaq = %.6f   (V_plaq*Var(plaq), V_plaq=%ld ; Var=%.4e)\n",
+                static_cast<double>(Vpl) * plaq.var(), Vpl, plaq.var()); }
   report_string_tension(/*label=*/"", jk, in);
   return 0;
 }

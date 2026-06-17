@@ -125,7 +125,10 @@ int main(int argc, char** argv) {
   }
   int W_ll = 0; const Real tau_ll = tau_int(ll_series, &W_ll);
   const Real neff = effective_sample_size(ll_series);
-  std::printf("plaquette   = %.6f +/- %.6f\n", plaq.mean(), plaq.binned_error());
+  // chi_plaq = V_plaq*Var(plaq), V_plaq = vol*D(D-1)/2 (plaquette count): gauge specific-heat
+  // peak at the freezing/confinement transition (the primary gauge line finder).
+  std::printf("plaquette   = %.6f +/- %.6f   chi_plaq=%.4f\n", plaq.mean(), plaq.binned_error(),
+              plaq.susceptibility(V * kDim * (kDim - 1) / 2.0));
   std::printf("L_phi       = %.6f +/- %.6f\n", Lphi.mean(), Lphi.binned_error());
   // L_link error is now the autocorrelation-aware (Madras-Sokal) estimate, not naive.
   std::printf("L_link      = %.6f +/- %.6f   chi_link=%.4f\n",
