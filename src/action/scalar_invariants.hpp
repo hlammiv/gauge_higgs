@@ -147,6 +147,49 @@ struct CasimirChannels {
     return g;
   }
 
+  // ---- VALUE superoperator (the un-optimized twin of the force superop above) -------------
+  // V_matter = sum_c f[c] V_c = sum_c f[c] <M, P_c M> = Re[ vec(M)^dag Q vec(M) ], M=phi phi^dag,
+  // Q = sum_c f[c]*P_c (factor f[c], NOT 2*f[c] like the force). Built ONCE via the SAME exact
+  // apply_proj path on the basis matrices E_{ij} -> matches the uncached value() to projector
+  // precision (reorders FP ops, not bit-identical). value() then costs one d^2 x d^2 matvec
+  // instead of O(n_ch^2 * n_gen * d^3); value() is in the LLR accept step (~50% of a BT traj).
+  std::vector<Complex> build_value_superop(const std::vector<Real>& f) const {
+    const int dd = d * d;
+    std::vector<Complex> Qsuper(static_cast<std::size_t>(dd) * dd, Complex(0, 0));
+    for (int i = 0; i < d; ++i)
+      for (int j = 0; j < d; ++j) {
+        DMat E(d, d); E(i, j) = Complex(1, 0);
+        DMat QE(d, d);                              // QE = sum_c f[c]*P_c(E_{ij})
+        for (int c = 0; c < n_channels(); ++c) {
+          if (f[c] == 0.0) continue;
+          QE = QE + apply_proj(c, E) * Complex(f[c], 0);
+        }
+        const int col = i * d + j;
+        for (int p = 0; p < d; ++p)
+          for (int q = 0; q < d; ++q)
+            Qsuper[static_cast<std::size_t>(p * d + q) * dd + col] = QE(p, q);
+      }
+    return Qsuper;
+  }
+
+  // Fast value using the prebuilt value superoperator (build_value_superop).
+  Real value_cached(const DVec& phi, const std::vector<Complex>& Qsuper, Real mu2) const {
+    const int dd = d * d;
+    std::vector<Complex> vM(static_cast<std::size_t>(dd));
+    for (int i = 0; i < d; ++i) {
+      const Complex pi = phi(i);
+      for (int j = 0; j < d; ++j) vM[static_cast<std::size_t>(i) * d + j] = pi * std::conj(phi(j));
+    }
+    Real vmat = 0.0;
+    for (int r = 0; r < dd; ++r) {
+      const Complex* row = Qsuper.data() + static_cast<std::size_t>(r) * dd;
+      Complex acc(0, 0);
+      for (int k = 0; k < dd; ++k) acc += row[k] * vM[k];
+      vmat += (std::conj(vM[r]) * acc).real();
+    }
+    return -mu2 * phi.norm2() + vmat;
+  }
+
  private:
   // Distinct eigenvalues of Chat via Lanczos in the d x d matrix space (Hermitian
   // operator, real inner product Re Tr(A^dag B)); generic Hermitian start sees every
@@ -201,9 +244,26 @@ struct MultiInvariantPotential : OnsitePotential<N> {
   // NOTE: built from f at construction -- f is fixed for the potential's lifetime
   // (all call sites pass f to the ctor and never mutate it afterward).
   std::vector<Complex> Asuper;
+  std::vector<Complex> Qsuper;             // value superoperator (build_value_superop)
+  bool value_cache_ok = false;            // gated on a ctor-time fnorm self-check vs uncached value()
   MultiInvariantPotential(const CasimirChannels<N>& c, std::vector<Real> ff, Real m)
-      : ch(&c), f(std::move(ff)), mu2(m), Asuper(c.build_combined_superop(f)) {}
-  Real value(const DVec& phi) const override { return ch->value(phi, f, mu2); }
+      : ch(&c), f(std::move(ff)), mu2(m),
+        Asuper(c.build_combined_superop(f)), Qsuper(c.build_value_superop(f)) {
+    // self-check: cached==uncached value on a few random phi (reorders FP -> match to projector
+    // precision; tolerance scaled like the force superop, which ships ~2e-8 rel at large d).
+    std::mt19937_64 rng(0x5A17ULL); std::normal_distribution<Real> gd(0.0, 1.0);
+    Real maxrel = 0.0;
+    for (int t = 0; t < 5; ++t) {
+      DVec phi(c.d); for (int a = 0; a < c.d; ++a) phi(a) = Complex(gd(rng), gd(rng));
+      const Real vu = ch->value(phi, f, mu2), vc = ch->value_cached(phi, Qsuper, mu2);
+      const Real den = std::max<Real>(1e-30, std::fabs(vu));
+      maxrel = std::max(maxrel, std::fabs(vc - vu) / den);
+    }
+    value_cache_ok = (maxrel < 1e-6);     // safe margin above the measured 6e-14 (d=7) .. 4e-10 (d=13)
+  }
+  Real value(const DVec& phi) const override {
+    return value_cache_ok ? ch->value_cached(phi, Qsuper, mu2) : ch->value(phi, f, mu2);
+  }
   DVec dV_dphibar(const DVec& phi) const override { return ch->dV_dphibar_cached(phi, Asuper, mu2); }
 };
 
